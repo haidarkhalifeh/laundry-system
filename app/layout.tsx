@@ -1,16 +1,12 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import NavBar from './components/NavBar';
 import "./globals.css";
+import { Cairo, Tajawal, Noto_Sans_Arabic } from 'next/font/google'
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
+const cairo = Cairo({ subsets: ['arabic'], weight: ['400','600','700'], display: 'swap' })
+const tajawal = Tajawal({ subsets: ['arabic'], weight: ['400','500','700','800'], display: 'swap' })
+const noto_sans_arabic = Noto_Sans_Arabic({ subsets: ['arabic'], weight: ['400','700'], display: 'swap' })
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "Create Next App",
@@ -22,11 +18,13 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+
   return (
-    <html lang="en">
+    <html lang="ar">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={cairo.className}
       >
+      <NavBar />
         {children}
       </body>
     </html>

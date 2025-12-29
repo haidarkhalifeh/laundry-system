@@ -1,0 +1,113 @@
+// ---------- GENERATOR & DATASOURCE (Prisma 7) ----------
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ---------- ENUMS ----------
+enum InvoiceStatus {
+  OPEN
+  READY
+  PAID
+  CANCELED
+}
+
+// ---------- MODELS ----------
+
+// Expenses
+model Expense {
+  id        Int      @id @default(autoincrement()) // idExpense
+  type      String
+  amount    Float
+  createdAt DateTime @default(now())
+}
+
+// Customers
+model Customer {
+  id        Int       @id @default(autoincrement()) // idCustomer
+  name      String
+  phone     String?    @unique
+  address   String?
+  createdAt DateTime  @default(now())
+
+  invoices  Invoice[]
+}
+
+// Invoices
+model Invoice {
+  id             Int            @id @default(autoincrement())
+  ticketNumber   String         @unique
+  status         InvoiceStatus  @default(OPEN)
+  createdAt      DateTime       @default(now())
+
+  subtotal       Float          @default(0)
+  adjustedAmount Float          @default(0) // can be negative or positive
+  total          Float          @default(0)
+
+  notes          String?
+
+  customer       Customer       @relation(fields: [customerId], references: [id])
+  customerId     Int
+
+  items          InvoiceItem[]
+}
+
+// Items (garments)
+model Item {
+  id           Int           @id @default(autoincrement()) // idItem
+  name         String
+  active       Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+
+  prices       ItemPrice[]
+  invoiceItems InvoiceItem[]
+}
+
+// Service types (Iron, Wash & Iron, etc.)
+model ServiceType {
+  id           Int           @id @default(autoincrement()) // idServiceType
+  name         String
+  code         String        @unique
+  createdAt    DateTime      @default(now())
+
+  prices       ItemPrice[]
+  invoiceItems InvoiceItem[]
+}
+
+// Price list per (Item, ServiceType)
+model ItemPrice {
+  id            Int         @id @default(autoincrement()) // idItemPrice
+  price         Float
+  active        Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+
+  item          Item        @relation(fields: [itemId], references: [id])
+  itemId        Int
+
+  serviceType   ServiceType @relation(fields: [serviceTypeId], references: [id])
+  serviceTypeId Int
+
+  @@unique([itemId, serviceTypeId])
+}
+
+// Invoice line items
+model InvoiceItem {
+  id             Int         @id @default(autoincrement()) // UniqueID
+  quantity       Int
+  unitPrice      Float       // base unit price copied from ItemPrice at time of sale
+  adjustedAmount Float       @default(0) // positive = surcharge, negative = discount
+  lineTotal      Float       // (unitPrice + adjustedAmount) * quantity
+
+  invoice        Invoice     @relation(fields: [invoiceId], references: [id])
+  invoiceId      Int
+
+  item           Item        @relation(fields: [itemId], references: [id])
+  itemId         Int
+
+  serviceType    ServiceType @relation(fields: [serviceTypeId], references: [id])
+  serviceTypeId  Int
+}
