@@ -5,6 +5,18 @@ import type { Prisma } from '@/app/generated/prisma/client';
 
 // GET /api/expenses?search=detergent&days=30
 // GET /api/expenses?search=...&days=...&from=yyyy-mm-dd&to=yyyy-mm-dd
+const EXPENSE_CATEGORIES = [
+  'RENT',
+  'UTILITIES',
+  'SUPPLIES',
+  'MAINTENANCE',
+  'SALARIES',
+  'DELIVERY',
+  'MARKETING',
+  'OTHER',
+] as const;
+
+type ExpenseCategory = typeof EXPENSE_CATEGORIES[number];
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -13,6 +25,7 @@ export async function GET(request: NextRequest) {
   const daysParam = searchParams.get('days') ?? undefined;
   const fromParam = searchParams.get('from') ?? undefined;
   const toParam = searchParams.get('to') ?? undefined;
+  const categoryParam = searchParams.get('category') ?? undefined;
 
   const where: Prisma.ExpenseWhereInput = {};
 
@@ -37,6 +50,10 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  if (categoryParam && EXPENSE_CATEGORIES.includes(categoryParam as ExpenseCategory)) {
+    where.category = categoryParam as ExpenseCategory;
+  }
+  
   const expenses = await prisma.expense.findMany({
     where,
     orderBy: { createdAt: 'desc' },
@@ -50,6 +67,7 @@ type ExpensePayload = {
   id?: number;
   type?: string;
   amount?: number;
+  category?: ExpenseCategory;
   // yyyy-mm-dd coming from the date input; will map to createdAt
   date?: string;
 };
@@ -60,6 +78,11 @@ export async function POST(request: NextRequest) {
 
   const type = body.type?.trim();
   const amount = body.amount;
+
+  const category =
+  body.category && EXPENSE_CATEGORIES.includes(body.category)
+    ? body.category
+    : 'OTHER';
 
   if (!type || amount === undefined || Number.isNaN(amount)) {
     return NextResponse.json(
@@ -79,6 +102,7 @@ export async function POST(request: NextRequest) {
   const data: Prisma.ExpenseCreateInput = {
     type,
     amount,
+    category,
     ...(createdAt ? { createdAt } : {}),
   };
 
@@ -97,6 +121,10 @@ export async function PUT(request: NextRequest) {
       { status: 400 },
     );
   }
+  const category =
+  body.category && EXPENSE_CATEGORIES.includes(body.category)
+    ? body.category
+    : undefined;
 
   const type = body.type?.trim();
   const amount = body.amount;
@@ -120,6 +148,7 @@ export async function PUT(request: NextRequest) {
     type,
     amount,
     ...(createdAt ? { createdAt } : {}),
+    ...(category ? { category } : {}),
   };
 
   try {

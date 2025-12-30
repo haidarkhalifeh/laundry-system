@@ -16,14 +16,25 @@ enum InvoiceStatus {
   CANCELED
 }
 
+enum ExpenseCategory {
+  RENT           // Branch / office / storage rent
+  UTILITIES      // Electricity, water, gas, internet, phone
+  SUPPLIES       // Laundry detergents, softeners, cleaning tools, packaging
+  MAINTENANCE    // Machine repair, building repair, general maintenance
+  SALARIES       // Employee wages, bonuses, social contributions
+  DELIVERY       // Fuel, vehicle maintenance, transport/logistics
+  MARKETING      // Ads, flyers, promotions, online/offline campaigns
+  OTHER          // Miscellaneous or irregular expenses
+}
+
 // ---------- MODELS ----------
 
-// Expenses
 model Expense {
-  id        Int      @id @default(autoincrement()) // idExpense
-  type      String
+  id        Int             @id @default(autoincrement()) // idExpense
+  category  ExpenseCategory @default(OTHER)
+  type      String          // subcategory or specific expense, e.g., "Handles", "Detergent"
   amount    Float
-  createdAt DateTime @default(now())
+  createdAt DateTime        @default(now())
 }
 
 // Customers

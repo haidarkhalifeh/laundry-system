@@ -6,8 +6,33 @@ type Expense = {
   id: number;
   type: string;
   amount: number;
-  createdAt: string; // ISO
+  category: string;
+  createdAt: string;
 };
+
+const EXPENSE_CATEGORIES = [
+  { value: 'SUPPLIES', label: 'مواد مصبغة' },
+  { value: 'UTILITIES', label: 'كهرباء / ماء / إنترنت' },
+  { value: 'SALARIES', label: 'رواتب' },
+  { value: 'RENT', label: 'إيجار' },
+  { value: 'MAINTENANCE', label: 'صيانة' },
+  { value: 'DELIVERY', label: 'توصيل / بنزين' },
+  { value: 'MARKETING', label: 'تسويق' },
+  { value: 'OTHER', label: 'أخرى' },
+];
+
+
+
+const QUICK_TYPES = [
+  'دواء غسيل',
+  'تعاليق',
+  'مياه خزان',
+  'نيلون حرامات',
+  'تراوزر غارد',
+];
+function getCategoryLabel(value: string) {
+  return EXPENSE_CATEGORIES.find((c) => c.value === value)?.label ?? 'أخرى';
+}
 
 const USD_RATE = 90000; // 1 USD = 90,000 LBP
 
@@ -41,6 +66,9 @@ export default function ExpensesPage() {
   const [formDate, setFormDate] = useState(formatDateYYYYMMDD(new Date()));
   const [formType, setFormType] = useState('');
   const [formAmount, setFormAmount] = useState(''); // formatted with commas
+  const [formCategory, setFormCategory] = useState('OTHER');
+  const [activeRange, setActiveRange] = useState<'day' | 'week' | 'month' | 'custom'>('custom');
+const [categoryFilter, setCategoryFilter] = useState('ALL');
 
   // load expenses
   async function loadExpenses(from?: string, to?: string) {
@@ -51,6 +79,9 @@ export default function ExpensesPage() {
 
     if (from) params.set('from', from);
     if (to) params.set('to', to);
+    if (categoryFilter !== 'ALL') {
+      params.set('category', categoryFilter);
+    }
 
     const res = await fetch(`/api/expenses?${params.toString()}`, {
       cache: 'no-store',
@@ -59,6 +90,15 @@ export default function ExpensesPage() {
     setExpenses(data);
     setLoading(false);
   }
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      loadExpenses();
+    }, 300); // debounce
+  
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, days, categoryFilter]);
 
   useEffect(() => {
     loadExpenses();
@@ -71,6 +111,7 @@ export default function ExpensesPage() {
     setFormDate(formatDateYYYYMMDD(new Date()));
     setFormType('');
     setFormAmount('');
+    setFormCategory('OTHER');
   }
 
   function arabicToEnglishDigits(value: string) {
@@ -90,6 +131,26 @@ export default function ExpensesPage() {
     setFormAmount(
       num.toLocaleString('en-LB', { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
     );
+  }
+
+  function formatArabicDay(dateStr: string) {
+    return new Date(dateStr).toLocaleDateString('ar-LB', {
+      weekday: 'long',
+    });
+  }
+  
+  function shiftDate(dateStr: string, days: number) {
+    const d = new Date(dateStr);
+    d.setDate(d.getDate() + days);
+    return formatDateYYYYMMDD(d);
+  }
+
+  function resetFilters() {
+    setActiveRange('custom');
+    setCategoryFilter('ALL');
+    setSearch('');
+    setDays('1');
+    loadExpenses();
   }
 
   // submit create/update
@@ -117,6 +178,7 @@ export default function ExpensesPage() {
       id: formId ?? undefined,
       type,
       amount: amountLBP,
+      category: formCategory,
       date: formDate || undefined,
     };
 
@@ -159,175 +221,267 @@ export default function ExpensesPage() {
     setFormAmount(
       exp.amount.toLocaleString('en-LB', { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
     );
+    setFormCategory(exp.category ?? 'OTHER');
   }
 
   const total = expenses.reduce((sum, e) => sum + e.amount, 0);
 
   return (
     <div dir="rtl" className="bg-[#122035] min-h-screen px-4 py-6">
-      <div className="mx-auto max-w-5xl space-y-6">
+      <div className="  space-y-6">
         <header className="flex flex-wrap items-center justify-between gap-2">
           <h1 className="text-3xl font-bold text-white">المصاريف</h1>
-          <div className="text-2xl font-bold text-white">
-            المجموع في القائمة:
-            <br />
-            <span className="font-semibold">
-              {total.toLocaleString('en-LB', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}{' '}
-              ليرة
-              <br />
-            </span>
-            <span className="font-semibold">
-              {(total / USD_RATE).toLocaleString('en-LB', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}{' '}
-              $ (تقريباً)
-            </span>
-          </div>
+          
         </header>
 
        {/* Filters */}
-<section className="rounded-lg bg-white p-4 shadow-sm flex flex-wrap items-center justify-between gap-4">
-  {/* Left: Filter buttons */}
-  <div className="flex flex-wrap gap-2">
-    <button
-      type="button"
-      onClick={() =>
-        loadExpenses(formatDateYYYYMMDD(new Date()), formatDateYYYYMMDD(new Date()))
-      }
-      className="rounded-md bg-sky-600 px-4 py-2 text-white hover:bg-sky-700"
-    >
-      اليوم
-    </button>
-    <button
-      type="button"
-      onClick={() => {
-        const { monday, saturday } = getWeekRange(new Date());
-        loadExpenses(formatDateYYYYMMDD(monday), formatDateYYYYMMDD(saturday));
-      }}
-      className="rounded-md bg-sky-600 px-4 py-2 text-white hover:bg-sky-700"
-    >
-      هذا الأسبوع
-    </button>
-    <button
-      type="button"
-      onClick={() => {
-        const now = new Date();
-        const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-        const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-        loadExpenses(formatDateYYYYMMDD(firstDay), formatDateYYYYMMDD(lastDay));
-      }}
-      className="rounded-md bg-sky-600 px-4 py-2 text-white hover:bg-sky-700"
-    >
-      هذا الشهر
-    </button>
+        {/* Form */}
+        <section className="rounded-lg font-bold text-base bg-white p-4 shadow-sm">
+          <h2 className="mb-3 text-3xl text-slate-900">{formId ? 'تعديل مصروف' : 'أضف مصروف'}</h2>
+          <form onSubmit={handleSubmit} className="grid gap-3 sm:grid-cols-5">
+
+  {/* Date with arrows */}
+  <div>
+    <label className="mb-1 block text-black-600">التاريخ</label>
+    <div className="flex items-center">
+      <div>
+      <button
+        type="button"
+        onClick={() => setFormDate(shiftDate(formDate, 1))}
+        className="rounded border px-1.5 py my-1"
+      >
+        +
+      </button>
+        <button
+        type="button"
+        onClick={() => setFormDate(shiftDate(formDate, -1))}
+        className="rounded border px-2"
+      >
+        -
+      </button>
+      
+      </div>
+      <input
+        type="date"
+        value={formDate}
+        onChange={(e) => setFormDate(e.target.value)}
+        className="w-full rounded-md border px-2 py-1"
+      />
+     
+    </div>
+    <div className="mt-1 text-sm text-slate-600">
+      {formatArabicDay(formDate)}
+    </div>
   </div>
 
-  {/* Right: Search + Days form */}
-  <form
-    onSubmit={(e) => {
-      e.preventDefault();
-      loadExpenses();
-    }}
-    className="flex flex-wrap items-end gap-3 text-2xl"
-  >
-    <div className="flex-1 min-w-[180px]">
-      <label className="mb-1 block text-black-600 py-2">بحث (نوع)</label>
-      <input
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        className="w-full rounded-md border border-slate-300 px-3 py-2 text-base focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-        placeholder="منظف.. راتب.."
-      />
-    </div>
-    <div>
-      <label className="mb-1 block text-base text-black-600">خلال ايام</label>
-      <input
-        type="number"
-        min={1}
-        value={days}
-        onChange={(e) => setDays(e.target.value)}
-        className="w-24 rounded-md border border-slate-300 px-3 py-2 text-xl focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-      />
-    </div>
-    <button
-      type="submit"
-      className="rounded-md bg-sky-600 px-4 py-2 text-xl text-white hover:bg-sky-700 disabled:opacity-60"
-      disabled={loading}
+  {/* Category */}
+  <div>
+    <label className="mb-1 block text-black-600">الفئة</label>
+    <select
+      value={formCategory}
+      onChange={(e) => setFormCategory(e.target.value)}
+      className="w-full rounded-md border px-3 py-2"
     >
-      {loading ? 'يبحث...' : 'بحث'}
-    </button>
+      {EXPENSE_CATEGORIES.map((c) => (
+        <option key={c.value} value={c.value}>
+          {c.label}
+        </option>
+      ))}
+    </select>
+  </div>
+
+  {/* Type */}
+  <div>
+    <label className="mb-1 block text-black-600">اسم المصروف *</label>
+    <input
+      value={formType}
+      onChange={(e) => setFormType(e.target.value)}
+      className="w-full rounded-md border px-3 py-2"
+      placeholder="منظف.. راتب.."
+      required
+    />
+    <div className="mt-1 flex flex-wrap gap-1">
+      {QUICK_TYPES.map((t) => (
+        <button
+          key={t}
+          type="button"
+          onClick={() => setFormType(t)}
+          className="rounded bg-slate-100 px-2 py-1 text-xs hover:bg-slate-200"
+        >
+          {t}
+        </button>
+      ))}
+    </div>
+  </div>
+
+  {/* Amount (unchanged) */}
+  <div>
+    <label className="mb-1 block text-black-600">المبلغ *</label>
+    <input
+      type="text"
+      inputMode="numeric"
+      placeholder=' 100,000 ل.ل او 10$'
+      value={formAmount}
+      onChange={handleAmountChange}
+      className="w-full rounded-md border px-3 py-2"
+      required
+    />
+  </div>
+
+  {/* Submit */}
+  <div className="flex flex-col my-7">
+  <button
+    type="submit"
+    disabled={saving}
+    className="w-full rounded-md bg-emerald-600 px-4 py-2 text-white"
+  >
+    {formId ? 'حفظ' : 'إضافة'}
+  </button>
+
+  {formId && (
     <button
       type="button"
-      onClick={() => {
-        setSearch('');
-        setDays('1');
-        loadExpenses();
-      }}
-      className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xl text-slate-700 hover:bg-slate-100"
+      onClick={resetForm}
+      className="mt-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
     >
-      إعادة ضبط
+      إلغاء التعديل
     </button>
-  </form>
-</section>
-        {/* Form */}
-        <section className="rounded-lg font-bold text-xl bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-3xl text-slate-900">{formId ? 'تعديل مصروف' : 'أضف مصروف'}</h2>
-          <form onSubmit={handleSubmit} className="grid gap-3 sm:grid-cols-4">
-            <div className="sm:col-span-1">
-              <label className="mb-1 block  text-black-600">تاريخ</label>
-              <input
-                type="date"
-                value={formDate}
-                onChange={(e) => setFormDate(e.target.value)}
-                className="w-full rounded-md border border-slate-300 px-3 py-2 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-              />
-            </div>
-            <div className="sm:col-span-1">
-              <label className="mb-1 block text-black-600">اسم المصروف *</label>
-              <input
-                value={formType}
-                onChange={(e) => setFormType(e.target.value)}
-                className="w-full rounded-md border border-slate-300 px-3 py-2 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                placeholder="منظف.. راتب.."
-                required
-              />
-            </div>
-            <div className="sm:col-span-1">
-              <label className="mb-1 block  text-black-600">المبلغ (ليرة لبنانية) *</label>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={formAmount}
-                onChange={handleAmountChange}
-                className="w-full rounded-md border border-slate-300 px-3 py-2 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                placeholder="150,000 أو 10 (دولار)"
-                required
-              />
-            </div>
-            <div className="sm:col-span-1 flex items-end">
-              <button
-                type="submit"
-                className="w-full rounded-md bg-emerald-600 px-4 py-2 text-white hover:bg-emerald-700 disabled:opacity-60"
-                disabled={saving}
-              >
-                {saving ? (formId ? 'جار الحفظ…' : 'جارٍ الإضافة…') : formId ? 'حفظ التغييرات' : 'أضف مصروف'}
-              </button>
-            </div>
-          </form>
-          {formId && (
-            <button
-              type="button"
-              onClick={resetForm}
-              className="mt-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-            >
-              إلغاء التعديل
-            </button>
-          )}
+  )}
+</div>
+</form>
+        
         </section>
 
         {/* Table */}
         <section className=" text-xl font-bold rounded-lg bg-white p-4 shadow-sm">
+        <section className=" text-base rounded-lg bg-white p-4 shadow-sm flex flex-wrap items-end justify-between gap-4 my-4">
+
+  {/* Date range buttons */}
+  <div className="text-base flex gap-2">
+    {[
+      { key: 'day', label: 'اليوم' },
+      { key: 'week', label: 'هذا الأسبوع' },
+      { key: 'month', label: 'هذا الشهر' },
+    ].map((b) => (
+      <button
+        key={b.key}
+        type="button"
+        onClick={() => {
+          setActiveRange(b.key as 'day' | 'week' | 'month');
+          const now = new Date();
+
+          if (b.key === 'day') {
+            loadExpenses(formatDateYYYYMMDD(now), formatDateYYYYMMDD(now));
+          } else if (b.key === 'week') {
+            const { monday, saturday } = getWeekRange(now);
+            loadExpenses(formatDateYYYYMMDD(monday), formatDateYYYYMMDD(saturday));
+          } else {
+            const first = new Date(now.getFullYear(), now.getMonth(), 1);
+            const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+            loadExpenses(formatDateYYYYMMDD(first), formatDateYYYYMMDD(last));
+          }
+        }}
+        className={`rounded-md px-4 py-2 text-white ${
+          activeRange === b.key ? 'bg-emerald-600' : 'bg-sky-600'
+        }`}
+      >
+        {b.label}
+      </button>
+    ))}
+  </div>
+
+  {/* Category filter */}
+  <div>
+    <label className="block text-sm mb-1">الفئة</label>
+    <select
+      value={categoryFilter}
+      onChange={(e) => {
+        setActiveRange('custom');
+        setCategoryFilter(e.target.value);
+      }}
+      className="rounded-md border px-3 py-2"
+    >
+      <option value="ALL">الكل</option>
+      {EXPENSE_CATEGORIES.map((c) => (
+        <option key={c.value} value={c.value}>
+          {c.label}
+        </option>
+      ))}
+    </select>
+  </div>
+
+  {/* Search */}
+  <div className="flex-1 min-w-[180px]">
+    <label className="block text-sm mb-1">بحث</label>
+    <input
+      value={search}
+      onChange={(e) => {
+        setActiveRange('custom');
+        setSearch(e.target.value);
+      }}
+      className="w-full rounded-md border px-3 py-2"
+      placeholder="منظف.. راتب.."
+    />
+  </div>
+
+  {/* Days */}
+  <div>
+    <label className="block text-sm mb-1">خلال أيام</label>
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        onClick={() => setDays((d) => String(Math.max(1, Number(d) - 1)))}
+        className="rounded border px-2 py-1 text-sm"
+      >
+        −
+      </button>
+      <input
+        type="number"
+        min={1}
+        value={days}
+        onChange={(e) => {
+          setActiveRange('custom');
+          setDays(e.target.value);
+        }}
+        className="w-20 rounded-md border px-2 py-1 text-center"
+      />
+      <button
+        type="button"
+        onClick={() => setDays((d) => String(Number(d) + 1))}
+        className="rounded border px-2 py-1 text-sm"
+      >
+        +
+      </button>
+
+      <button
+  type="button"
+  onClick={resetFilters}
+  className="rounded-md border border-slate-300 bg-white px-4 py-2 text-slate-700 hover:bg-slate-100"
+>
+  إعادة ضبط
+</button>
+    </div>
+  </div>
+</section>
+
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-3xl text-black-900">قائمة المصاريف</h2>
-            <span className="text-black-500">{expenses.length.toLocaleString('ar-LB')} مصاريف</span>
+            <div><span className="text-black-500">{expenses.length.toLocaleString('ar-LB')} مصاريف</span>
+            <div className="text-2xl font-bold text-emerald-900">
+      {total.toLocaleString('en-LB', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      })}{' '}
+      ليرة
+    </div>
+    <div className="text-xl text-emerald-700">
+      {(total / USD_RATE).toLocaleString('en-LB', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      })}{' '}
+      $ تقريبًا
+    </div>
+            </div>
           </div>
 
           {expenses.length === 0 ? (
@@ -354,7 +508,14 @@ export default function ExpensesPage() {
                           day: '2-digit',
                         })}
                       </td>
-                      <td className="px-3 py-2 text-slate-900">{e.type}</td>
+                      <td className="px-3 py-2 text-slate-900">
+  <div className="flex items-center gap-2">
+    <span>{e.type}</span>
+    <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+      {getCategoryLabel(e.category)}
+    </span>
+  </div>
+</td>
                       <td className="px-3 py-2 text-right text-slate-900">
                         {e.amount.toLocaleString('en-LB', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                       </td>

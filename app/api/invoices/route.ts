@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import type { Prisma } from '@/app/generated/prisma/client';
 
-type InvoiceStatus = 'OPEN' | 'READY' | 'PAID' ;
+type InvoiceStatus = 'OPEN' | 'READY' | 'PAID' | 'CANCELED';
 
 // helper to generate a ticket number like "INV-2025-000001"
 function generateTicketNumber(createdAt: Date, sequence: number): string {
@@ -12,8 +12,7 @@ function generateTicketNumber(createdAt: Date, sequence: number): string {
   return `INV-${year}-${seqStr}`;
 }
 
-// GET /api/invoices?status=OPEN&days=30&search=ali&ticketNumber=INV-2025-000001
-// GET /api/invoices?status=OPEN&search=ali&ticketNumber=INV-2025-000001&start=2025-12-01&end=2025-12-09
+// GET /api/invoices
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
 
@@ -26,7 +25,7 @@ export async function GET(request: NextRequest) {
   const where: Prisma.InvoiceWhereInput = {};
 
   // filter by status
-  if (statusParam === 'OPEN' || statusParam === 'READY' || statusParam === 'PAID') {
+  if (statusParam === 'OPEN' || statusParam === 'READY' || statusParam === 'PAID' || statusParam === 'CANCELED') {
     where.status = statusParam as InvoiceStatus;
   }
 
@@ -43,12 +42,11 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // ticketNumber exact match (for scanner / quick lookup)
+  // ticketNumber exact match
   if (ticketNumber) {
     where.ticketNumber = ticketNumber;
   } else if (search && search.trim() !== '') {
     const term = search.trim();
-    // search by ticket, customer name or phone
     where.OR = [
       { ticketNumber: { contains: term } },
       { customer: { name: { contains: term } } },
@@ -74,7 +72,6 @@ export async function GET(request: NextRequest) {
 }
 
 // POST /api/invoices
-// body: { customerId, notes?, items: [{ itemId, serviceTypeId, quantity, adjustedAmount? }, ...] }
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as {
     customerId?: number;
@@ -83,25 +80,14 @@ export async function POST(request: NextRequest) {
       itemId?: number;
       serviceTypeId?: number;
       quantity?: number;
-      adjustedAmount?: number; // already in LBP from frontend
+      adjustedAmount?: number;
     }[];
   };
 
-  if (!body.customerId) {
-    return NextResponse.json(
-      { error: 'customerId is required' },
-      { status: 400 },
-    );
-  }
+  if (!body.customerId) return NextResponse.json({ error: 'customerId is required' }, { status: 400 });
+  if (!body.items || !Array.isArray(body.items) || body.items.length === 0)
+    return NextResponse.json({ error: 'At least one invoice item is required' }, { status: 400 });
 
-  if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
-    return NextResponse.json(
-      { error: 'At least one invoice item is required' },
-      { status: 400 },
-    );
-  }
-
-  // normalize / validate
   const normalizedItems = body.items
     .map((it) => ({
       itemId: it.itemId ?? 0,
@@ -109,39 +95,21 @@ export async function POST(request: NextRequest) {
       quantity: it.quantity ?? 0,
       adjustedAmount: it.adjustedAmount ?? 0,
     }))
-    .filter(
-      (it) =>
-        it.itemId > 0 &&
-        it.serviceTypeId > 0 &&
-        it.quantity > 0,
-    );
+    .filter((it) => it.itemId > 0 && it.serviceTypeId > 0 && it.quantity > 0);
 
-  if (normalizedItems.length === 0) {
-    return NextResponse.json(
-      { error: 'Valid invoice items are required' },
-      { status: 400 },
-    );
-  }
+  if (normalizedItems.length === 0)
+    return NextResponse.json({ error: 'Valid invoice items are required' }, { status: 400 });
 
-  // fetch base prices for all item/serviceType pairs
+  // fetch prices
   const itemIds = Array.from(new Set(normalizedItems.map((i) => i.itemId)));
-  const serviceTypeIds = Array.from(
-    new Set(normalizedItems.map((i) => i.serviceTypeId)),
-  );
+  const serviceTypeIds = Array.from(new Set(normalizedItems.map((i) => i.serviceTypeId)));
 
   const prices = await prisma.itemPrice.findMany({
-    where: {
-      itemId: { in: itemIds },
-      serviceTypeId: { in: serviceTypeIds },
-      active: true,
-    },
+    where: { itemId: { in: itemIds }, serviceTypeId: { in: serviceTypeIds }, active: true },
   });
 
   const priceMap = new Map<string, number>();
-  for (const p of prices) {
-    const key = `${p.itemId}-${p.serviceTypeId}`;
-    priceMap.set(key, p.price);
-  }
+  for (const p of prices) priceMap.set(`${p.itemId}-${p.serviceTypeId}`, p.price);
 
   let subtotal = 0;
   const itemsData: Prisma.InvoiceItemCreateManyInvoiceInput[] = [];
@@ -149,21 +117,15 @@ export async function POST(request: NextRequest) {
   for (const it of normalizedItems) {
     const key = `${it.itemId}-${it.serviceTypeId}`;
     const basePrice = priceMap.get(key);
-
-    if (basePrice === undefined) {
+    if (basePrice === undefined)
       return NextResponse.json(
-        {
-          error: `No active price found for itemId=${it.itemId} and serviceTypeId=${it.serviceTypeId}`,
-        },
+        { error: `No active price found for itemId=${it.itemId} and serviceTypeId=${it.serviceTypeId}` },
         { status: 400 },
       );
-    }
 
-    const adjustedAmount = it.adjustedAmount ?? 0;
     const unitPrice = basePrice;
-    const finalUnitPrice = unitPrice + adjustedAmount;
+    const finalUnitPrice = unitPrice + it.adjustedAmount;
     const lineTotal = finalUnitPrice * it.quantity;
-
     subtotal += lineTotal;
 
     itemsData.push({
@@ -171,17 +133,13 @@ export async function POST(request: NextRequest) {
       serviceTypeId: it.serviceTypeId,
       quantity: it.quantity,
       unitPrice,
-      adjustedAmount,
+      adjustedAmount: it.adjustedAmount,
       lineTotal,
     });
   }
 
   const now = new Date();
-
-  // crude sequence per day for ticketNumber
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const count = await prisma.invoice.count();
-
   const ticketNumber = generateTicketNumber(now, count + 1);
 
   const invoice = await prisma.invoice.create({
@@ -193,64 +151,49 @@ export async function POST(request: NextRequest) {
       subtotal,
       adjustedAmount: 0,
       total: subtotal,
-      items: {
-        createMany: {
-          data: itemsData,
-        },
-      },
+      items: { createMany: { data: itemsData } },
     },
     include: {
       customer: true,
-      items: {
-        include: {
-          item: true,
-          serviceType: true,
-        },
-      },
+      items: { include: { item: true, serviceType: true } },
     },
   });
 
   return NextResponse.json(invoice, { status: 201 });
 }
 
-// PUT /api/invoices
-// body: { id? , ticketNumber?, status?: 'OPEN' | 'READY' | 'PAID', adjustedAmount?: number }
+// PUT /api/invoices - update status, adjustedAmount, or items
 export async function PUT(request: NextRequest) {
   const body = (await request.json()) as {
     id?: number;
     ticketNumber?: string;
     status?: InvoiceStatus;
-    adjustedAmount?: number; // already in LBP from frontend
+    adjustedAmount?: number;
+    items?: { itemId?: number; serviceTypeId?: number; quantity?: number; adjustedAmount?: number }[];
   };
 
-  if (!body.id && !body.ticketNumber) {
-    return NextResponse.json(
-      { error: 'id or ticketNumber is required' },
-      { status: 400 },
-    );
-  }
+  if (!body.id && !body.ticketNumber)
+    return NextResponse.json({ error: 'id or ticketNumber is required' }, { status: 400 });
 
-  const whereUnique: Prisma.InvoiceWhereUniqueInput = body.id
-    ? { id: body.id }
-    : { ticketNumber: body.ticketNumber! };
+  const whereUnique: Prisma.InvoiceWhereUniqueInput = body.id ? { id: body.id } : { ticketNumber: body.ticketNumber! };
 
-  const existing = await prisma.invoice.findUnique({
-    where: whereUnique,
-  });
-
-  if (!existing) {
-    return NextResponse.json(
-      { error: 'Invoice not found' },
-      { status: 404 },
-    );
-  }
+  const existing = await prisma.invoice.findUnique({ where: whereUnique });
+  if (!existing) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
 
   const data: Prisma.InvoiceUpdateInput = {};
 
+  // --- handle status update ---
   if (body.status) {
+    if (existing.status === 'PAID' || existing.status === 'CANCELED')
+      return NextResponse.json({ error: `Cannot change status of ${existing.status} invoice` }, { status: 400 });
+
+    if (body.status === 'CANCELED' && existing.status !== 'OPEN')
+      return NextResponse.json({ error: 'Only OPEN invoices can be canceled' }, { status: 400 });
+
     data.status = body.status;
   }
 
+  // --- handle adjustedAmount ---
   if (typeof body.adjustedAmount === 'number') {
     const subtotal = existing.subtotal ?? 0;
     const adj = body.adjustedAmount;
@@ -258,17 +201,74 @@ export async function PUT(request: NextRequest) {
     data.total = subtotal + adj;
   }
 
+  // --- handle editing invoice items ---
+  if (body.items && Array.isArray(body.items)) {
+    if (existing.status !== 'OPEN')
+      return NextResponse.json({ error: 'Only OPEN invoices can be edited' }, { status: 400 });
+
+    const normalizedItems = body.items
+      .map((it) => ({
+        itemId: it.itemId ?? 0,
+        serviceTypeId: it.serviceTypeId ?? 0,
+        quantity: it.quantity ?? 0,
+        adjustedAmount: it.adjustedAmount ?? 0,
+      }))
+      .filter((it) => it.itemId > 0 && it.serviceTypeId > 0 && it.quantity > 0);
+
+    if (normalizedItems.length === 0)
+      return NextResponse.json({ error: 'Valid invoice items are required' }, { status: 400 });
+
+    const itemIds = Array.from(new Set(normalizedItems.map((i) => i.itemId)));
+    const serviceTypeIds = Array.from(new Set(normalizedItems.map((i) => i.serviceTypeId)));
+
+    const prices = await prisma.itemPrice.findMany({
+      where: { itemId: { in: itemIds }, serviceTypeId: { in: serviceTypeIds }, active: true },
+    });
+
+    const priceMap = new Map<string, number>();
+    for (const p of prices) priceMap.set(`${p.itemId}-${p.serviceTypeId}`, p.price);
+
+    let subtotal = 0;
+    const itemsData: Prisma.InvoiceItemCreateManyInvoiceInput[] = [];
+
+    for (const it of normalizedItems) {
+      const key = `${it.itemId}-${it.serviceTypeId}`;
+      const basePrice = priceMap.get(key);
+      if (basePrice === undefined)
+        return NextResponse.json(
+          { error: `No active price for itemId=${it.itemId} serviceTypeId=${it.serviceTypeId}` },
+          { status: 400 },
+        );
+
+      const unitPrice = basePrice;
+      const finalUnitPrice = unitPrice + it.adjustedAmount;
+      const lineTotal = finalUnitPrice * it.quantity;
+      subtotal += lineTotal;
+
+      itemsData.push({
+        itemId: it.itemId,
+        serviceTypeId: it.serviceTypeId,
+        quantity: it.quantity,
+        unitPrice,
+        adjustedAmount: it.adjustedAmount,
+        lineTotal,
+      });
+    }
+
+    // delete old items and insert new
+    await prisma.invoiceItem.deleteMany({ where: { invoiceId: existing.id } });
+    await prisma.invoiceItem.createMany({ data: itemsData.map(d => ({ ...d, invoiceId: existing.id })) });
+
+    data.subtotal = subtotal;
+    data.total = subtotal + (existing.adjustedAmount ?? 0);
+  }
+
   const updated = await prisma.invoice.update({
     where: whereUnique,
     data,
     include: {
       customer: true,
-      items: {
-        include: {
-          item: true,
-          serviceType: true,
-        },
-      },
+      items: { include: { item: true, serviceType: true } },
     },
   });
 

@@ -8,7 +8,7 @@ import { useRef} from 'react';
 
 
 const frequentItemIds = [6, 7, 8, 1]; // IDs of the 30% most-used items
-const otherItemIds = [2, 3 ,4 ,5 , 9, 10, 11, 13, 14, 15, 16,18 ,12, 17]; // remaining IDs in your desired order
+const otherItemIds = [2, 3 ,4 ,5 , 9, 10, 11, 13, 14, 15, 16,18,21,19,20,22,23,24,12, 17]; // remaining IDs in your desired order
 const USD_RATE = 90000; // 1 USD = 90,000 LBP
 
 type Customer = {
@@ -42,7 +42,7 @@ type InvoiceItemRow = {
 type Invoice = {
   id: number;
   ticketNumber: string;
-  status: 'OPEN' | 'READY' | 'PAID';
+  status: 'OPEN' | 'READY' | 'PAID' | 'CANCELED';
   createdAt: string;
   subtotal: number;
   adjustedAmount: number;
@@ -79,6 +79,10 @@ function formatDateYYYYMMDD(d: Date): string {
   const dd = String(d.getDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
 }
+function toggleNegative(value: string) {
+  if (!value) return '-';
+  return value.startsWith('-') ? value.slice(1) : '-' + value;
+}
 
 function getWeekRange(date: Date) {
   const d = new Date(date);
@@ -95,6 +99,18 @@ function getWeekRange(date: Date) {
   saturday.setHours(23, 59, 59, 999);
 
   return { monday, saturday };
+}
+
+function formatWithCommas(value: string) {
+  if (!value) return '';
+  const sign = value.startsWith('-') ? '-' : '';
+  const num = value.replace(/[^0-9]/g, '');
+  if (!num) return sign;
+  return sign + Number(num).toLocaleString('en-US');
+}
+
+function stripCommas(value: string) {
+  return value.replace(/,/g, '');
 }
 
 // replace your existing loadInvoices with this function
@@ -145,6 +161,9 @@ useEffect(() => {
   const [showPrint, setShowPrint] = useState(false);
   const [startDate, setStartDate] = useState<string | undefined>();
 const [endDate, setEndDate] = useState<string | undefined>();
+const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
+const formRef = useRef<HTMLDivElement | null>(null);
+const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   type Errors = {
     customer?: string;
@@ -212,7 +231,7 @@ const [endDate, setEndDate] = useState<string | undefined>();
       setInvoices([]);
     } finally {
       setListLoading(false);
-      ticketInputRef.current?.focus();
+      
     }
   }
   useEffect(() => {
@@ -224,6 +243,18 @@ const [endDate, setEndDate] = useState<string | undefined>();
   }, []);
 
   useEffect(() => {
+    const t = setTimeout(() => {
+      loadInvoices(undefined, undefined, {
+        status: statusFilter,
+        days: daysFilter,
+        search: searchFilter,
+      });
+    }, 400); // debounce delay (ms)
+  
+    return () => clearTimeout(t);
+  }, [searchFilter, statusFilter, daysFilter]);
+
+  useEffect(() => {
     const handleAfterPrint = () => {
       ticketInputRef.current?.focus();
     };
@@ -232,6 +263,25 @@ const [endDate, setEndDate] = useState<string | undefined>();
     return () => window.removeEventListener('afterprint', handleAfterPrint);
   }, []);
 
+  const handleEditInvoice = (inv: Invoice) => {
+    setEditingInvoice(inv);
+    setSelectedCustomer(inv.customer);
+    setDraftItems(
+      inv.items.map((it) => ({
+        id: it.id,
+        itemId: it.item.id,
+        serviceTypeId: it.serviceType.id,
+        quantity: it.quantity,
+        adjustedAmount: String(it.adjustedAmount || 0),
+      }))
+    );
+    setNotes(inv.notes || '');
+  
+    // scroll to form smoothly
+    setTimeout(() => {
+      formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  };
   // ---- customer search / create ----
   async function handleCustomerSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -288,6 +338,36 @@ const [endDate, setEndDate] = useState<string | undefined>();
     setNewCustPhone('');
   }
 
+  const isTodayActive = () => {
+    const today = formatDateYYYYMMDD(new Date());
+    return startDate === today && endDate === today;
+  };
+  
+  const isThisWeekActive = () => {
+    const { monday, saturday } = getWeekRange(new Date());
+    return (
+      startDate === formatDateYYYYMMDD(monday) &&
+      endDate === formatDateYYYYMMDD(saturday)
+    );
+  };
+  
+  const isThisMonthActive = () => {
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  
+    return (
+      startDate === formatDateYYYYMMDD(firstDay) &&
+      endDate === formatDateYYYYMMDD(lastDay)
+    );
+  };
+  const dateBtnClass = (active: boolean) =>
+    `rounded-md px-4 py-2 font-semibold transition ${
+      active
+        ? 'bg-emerald-600 text-white ring-2 ring-emerald-400'
+        : 'bg-sky-600 text-white hover:bg-sky-700'
+    }`;
+
   // ---- draft invoice items ----
   function updateDraftRow(id: number, patch: Partial<DraftItemRow>) {
     setDraftItems((rows) =>
@@ -313,72 +393,100 @@ const [endDate, setEndDate] = useState<string | undefined>();
   }
 
   // ---- create invoice ----
-  async function handleCreateInvoice(e: React.FormEvent) {
+  async function handleSaveInvoice(e: React.FormEvent) {
     e.preventDefault();
-    
     setErrors({});
-
+  
     if (!selectedCustomer) {
       setErrors({ customer: 'اختر زبون أو قم بإنشاء واحد جديد أولاً' });
       return;
     }
-
+  
     const validRows = draftItems.filter(
-      (r) => r.itemId && r.serviceTypeId && r.quantity > 0,
+      (r) => r.itemId && r.serviceTypeId && r.quantity > 0
     );
     if (validRows.length === 0) {
       setErrors({ items: 'أضف على الأقل قطعة واحدة صحيحة إلى الفاتورة' });
       return;
     }
-
+  
     const itemsPayload = validRows.map((r) => ({
       itemId: r.itemId as number,
       serviceTypeId: r.serviceTypeId as number,
       quantity: r.quantity,
       adjustedAmount: normalizeAmountInput(r.adjustedAmount),
     }));
-
+  
     setCreating(true);
+  
+    try {
+      const res = await fetch('/api/invoices', {
+        method: editingInvoice ? 'PUT' : 'POST', // PUT if editing
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          editingInvoice
+            ? { id: editingInvoice.id, customerId: selectedCustomer.id, notes: notes.trim() || undefined, items: itemsPayload }
+            : { customerId: selectedCustomer.id, notes: notes.trim() || undefined, items: itemsPayload }
+        ),
+      });
+  
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        setErrors({ general: err?.error || 'فشل إنشاء الفاتورة، تواصل مع الدعم' });
+        return;
+      }
+  
+      const inv = (await res.json()) as Invoice;
+  
+      if (editingInvoice) {
+        // update the invoices in the state
+        setInvoices((prev) =>
+          prev.map((i) => (i.id === inv.id ? inv : i))
+        );
+      } else {
+        // new invoice
+        setInvoices((prev) => [inv, ...prev]);
+      }
+  
+      // reset form
+      setDraftItems([{ id: 1, itemId: '', serviceTypeId: '', quantity: 1, adjustedAmount: '' }]);
+      setNotes('');
+      setEditingInvoice(null); // clear editing mode
+      setSelectedCustomer(null); // reset customer selection
+      setCustomerSearch('');
+      await loadInvoices();
+      setSelectedInvoice(inv);
+      ticketInputRef.current?.focus();
+    } finally {
+      setCreating(false);
+    }
+  }
 
-    const res = await fetch('/api/invoices', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        customerId: selectedCustomer.id,
-        notes: notes.trim() || undefined,
-        items: itemsPayload,
-      }),
-    });
-
-    setCreating(false);
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => null);
-      setErrors({ general: 'فشل إنشاء الفاتورة، تواصل مع الدعم' });
+  async function searchCustomers(term: string) {
+    const q = term.trim();
+    if (!q) {
+      setCustomerResults([]);
       return;
     }
-
-    const inv = (await res.json()) as Invoice;
-    // reset form
-    setDraftItems([
-      { id: 1, itemId: '', serviceTypeId: '', quantity: 1, adjustedAmount: '' },
-    ]);
-    setNotes('');
-    // keep customer selected (often same person has multiple invoices)
-    await loadInvoices();
-    setSelectedInvoice(inv);
-    ticketInputRef.current?.focus();
+  
+    const res = await fetch(`/api/customers?search=${encodeURIComponent(q)}`);
+    if (!res.ok) return;
+  
+    const data = await res.json();
+    setCustomerResults(data);
   }
+
+
 
   // ---- status updates / payment ----
   async function updateInvoiceStatus(
     invoiceId: number,
-    status: 'OPEN' | 'READY' | 'PAID',
+    status: 'OPEN' | 'READY' | 'PAID' | 'CANCELED',
     adjustedAmountLb: number | null = null,
   ) {
     const payload: {
       id: number;
-      status: 'OPEN' | 'READY' | 'PAID';
+      status: 'OPEN' | 'READY' | 'PAID' | 'CANCELED';
       adjustedAmount?: number;
     } = {
       id: invoiceId,
@@ -441,12 +549,12 @@ const [endDate, setEndDate] = useState<string | undefined>();
     
     setSelectedInvoice(inv);
     setPrintMode(false);
-    ticketInputRef.current?.focus();
+    
   }
 
   function closeInvoiceView() {
     setSelectedInvoice(null);
-    ticketInputRef.current?.focus();
+    
   }
   
   function handlePrint(inv: Invoice) {
@@ -484,7 +592,7 @@ const [endDate, setEndDate] = useState<string | undefined>();
         </header>
 
         {/* Creation section */}
-        <section className="rounded-lg bg-white p-4 shadow-sm">
+        <section ref={formRef} className="rounded-lg bg-white p-4 shadow-sm">
           <h2 className="mb-3 text-2xl font-bold text-slate-900">
           إنشاء فاتورة
           </h2>
@@ -500,18 +608,35 @@ const [endDate, setEndDate] = useState<string | undefined>();
                 اختار الزبون
                 </div>
                 <div className="flex gap-2">
-                  <input
-                    value={customerSearch}
-                    onChange={(e) => setCustomerSearch(arabicToEnglishDigits(e.target.value))}
-                    placeholder="البحث بالاسم أو الهاتف"
-                    className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                  />
-                  <button
-                    type="submit"
-                    className="rounded-md bg-sky-600 px-3 py-2 text-base font-semibold text-white hover:bg-sky-700"
-                  >
-                  بحث
-                  </button>
+                <input
+  value={customerSearch}
+  onChange={(e) => {
+    const value = arabicToEnglishDigits(e.target.value);
+    setCustomerSearch(value);
+
+    // debounce search
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    searchTimeoutRef.current = setTimeout(() => {
+      searchCustomers(value);
+    }, 300);
+  }}
+  placeholder="البحث بالاسم أو الهاتف"
+  className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+/>
+<button
+  type="button"
+  onClick={() => {
+    setCustomerSearch('');
+    setSelectedCustomer(null);
+    setCustomerResults([]);
+  }}
+  className="rounded-md bg-emerald-600 px-3 py-2 text-base font-semibold text-white hover:bg-rose-700"
+>
+   الغاء الاختيار
+</button>
                 </div>
                 {customerResults.length > 0 && (
                   <div className="mt-2 max-h-40 overflow-y-auto rounded border border-slate-200 text-sm">
@@ -588,7 +713,7 @@ const [endDate, setEndDate] = useState<string | undefined>();
           </div>
 
           {/* Items table */}
-          <form onSubmit={handleCreateInvoice} className="space-y-3">
+          <form onSubmit={handleSaveInvoice} className="space-y-3">
             <div className="overflow-x-auto rounded-md border border-slate-200">
               <table className="min-w-full text-right text-sm">
                 <thead>
@@ -722,38 +847,47 @@ const [endDate, setEndDate] = useState<string | undefined>();
                       <td className="px-3 py-2 text-right">
                       
   <div className="flex items-center gap-2">
-    {/* Minus button */}
     
 
-    {/* Input field */}
     <input
-      type="text"
-      value={row.adjustedAmount || ''}
-      onChange={(e) =>
-        updateDraftRow(row.id, {
-          adjustedAmount: e.target.value.replace(/[^0-9٠-٩\-\,]/g, ''),
-        })
-      }
-      placeholder="0"
-      className="w-28 text-center rounded-md border border-slate-300 px-2 py-1 text-base font-bold focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-    />
+  type="text"
+  value={formatWithCommas(row.adjustedAmount)}
+  onChange={(e) => {
+    const raw = arabicToEnglishDigits(
+      e.target.value.replace(/[^0-9٠-٩\-\,]/g, '')
+    );
+
+    updateDraftRow(row.id, {
+      adjustedAmount: stripCommas(raw),
+    });
+  }}
+  placeholder="0"
+  className="w-28 text-center rounded-md border border-slate-300 px-2 py-1 text-base font-bold focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+/>
 
 <button
-      type="button"
-      onClick={() => {
-        const current = row.adjustedAmount || '';
-        // toggle minus at the start
-        const newValue = current.startsWith('-')
-          ? current.slice(1)
-          : '-' + current;
-        updateDraftRow(row.id, { adjustedAmount: newValue });
-      }}
-      className={`w-8 h-8 flex items-center justify-center rounded-md font-bold border transition ${
-        row.adjustedAmount?.startsWith('-') ? 'bg-red-500 text-white' : 'bg-slate-200'
-      } hover:bg-red-400`}
-    >
-      -
-    </button>
+  type="button"
+  onClick={() => {
+    const current = String(row.adjustedAmount || '');
+
+    const toggled = current.startsWith('-')
+      ? current.slice(1)
+      : '-' + current;
+
+    updateDraftRow(row.id, {
+      adjustedAmount: toggled,
+    });
+  }}
+  className={`w-8 h-8 flex items-center justify-center rounded-md font-bold border transition ${
+    String(row.adjustedAmount || '').startsWith('-')
+      ? 'bg-red-500 text-white'
+      : 'bg-slate-200'
+  } hover:bg-red-400`}
+>
+  −
+</button>
+
+
   </div>
 </td>
                       
@@ -800,13 +934,37 @@ const [endDate, setEndDate] = useState<string | undefined>();
                 />
               </div>
               <div className="flex flex-col items-end gap-2">
-                <button
-                  type="submit"
-                  className="rounded-md bg-emerald-600 px-4 py-2 text-xl font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
-                  disabled={creating}
-                >
-                  {creating ? 'جارٍ الإنشاء…' : 'إنشاء فاتورة'}
-                </button>
+              
+             <div><button
+  type="submit"
+  className="rounded-md bg-emerald-600 px-4 py-2 text-xl font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
+  disabled={creating}
+>
+  {creating
+    ? editingInvoice
+      ? 'جارٍ الحفظ…'
+      : 'جارٍ الإنشاء…'
+    : editingInvoice
+    ? 'حفظ التعديل'
+    : 'إنشاء فاتورة'}
+</button>
+
+{editingInvoice && (
+  <button
+    type="button"
+    onClick={() => {
+      setEditingInvoice(null);
+      setDraftItems([{ id: 1, itemId: '', serviceTypeId: '', quantity: 1, adjustedAmount: '' }]);
+      setNotes('');
+      setSelectedCustomer(null);
+    }}
+    className="rounded-md bg-slate-600 px-4 py-2  text-xl font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
+  >
+    إلغاء التعديل
+  </button>
+)}
+</div>
+
                 {errors.general && (
   <p className="mt-2 text-xs text-rose-600 text-right">{errors.general}</p>
 )}
@@ -861,13 +1019,37 @@ const [endDate, setEndDate] = useState<string | undefined>();
               التعديل على سعر الفاتورة
                 
               </label>
-              <input
-                
-                value={payAdjustedAmount}
-                onChange={(e) => setPayAdjustedAmount(arabicToEnglishDigits(e.target.value.replace(/[^0-9٠-٩\-\,]/g, '')))}
-                placeholder="0"
-                className="w-32 rounded-md border border-slate-300 px-3 py-2 text-xl text-right focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-              />
+              <div className="flex items-center gap-2">
+ 
+
+  <input
+    type="text"
+    value={formatWithCommas(payAdjustedAmount)}
+    onChange={(e) => {
+      const raw = arabicToEnglishDigits(
+        e.target.value.replace(/[^0-9٠-٩\-\,]/g, '')
+      );
+      setPayAdjustedAmount(stripCommas(raw));
+    }}
+    placeholder="0"
+    className="w-32 rounded-md border border-slate-300 px-3 py-2 text-xl text-right focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+  />
+
+<button
+    type="button"
+    onClick={() =>
+      setPayAdjustedAmount((prev) => toggleNegative(prev))
+    }
+    className={`w-8 h-8 flex items-center justify-center rounded-md font-bold border transition ${
+      payAdjustedAmount.startsWith('-')
+        ? 'bg-red-500 text-white'
+        : 'bg-slate-200'
+    }`}
+
+  >
+    −
+  </button>
+</div>
             </div>
             <button
               type="submit"
@@ -898,7 +1080,7 @@ const [endDate, setEndDate] = useState<string | undefined>();
     setEndDate(today);
     loadInvoices(today, today, { status: statusFilter, search: searchFilter });
   }}
-  className="rounded-md bg-sky-600 px-4 py-2 text-white hover:bg-sky-700"
+  className={dateBtnClass(isTodayActive())}
 >
   اليوم
 </button>
@@ -907,14 +1089,14 @@ const [endDate, setEndDate] = useState<string | undefined>();
   type="button"
   onClick={() => {
     const { monday, saturday } = getWeekRange(new Date());
-    setStartDate(formatDateYYYYMMDD(monday));
-    setEndDate(formatDateYYYYMMDD(saturday));
-    loadInvoices(formatDateYYYYMMDD(monday), formatDateYYYYMMDD(saturday), {
-      status: statusFilter,
-      search: searchFilter,
-    });
+    const start = formatDateYYYYMMDD(monday);
+    const end = formatDateYYYYMMDD(saturday);
+
+    setStartDate(start);
+    setEndDate(end);
+    loadInvoices(start, end, { status: statusFilter, search: searchFilter });
   }}
-  className="rounded-md bg-sky-600 px-4 py-2 text-white hover:bg-sky-700"
+  className={dateBtnClass(isThisWeekActive())}
 >
   هذا الأسبوع
 </button>
@@ -925,17 +1107,18 @@ const [endDate, setEndDate] = useState<string | undefined>();
     const now = new Date();
     const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
     const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
     const start = formatDateYYYYMMDD(firstDay);
     const end = formatDateYYYYMMDD(lastDay);
+
     setStartDate(start);
     setEndDate(end);
     loadInvoices(start, end, { status: statusFilter, search: searchFilter });
   }}
-  className="rounded-md bg-sky-600 px-4 py-2 text-white hover:bg-sky-700"
+  className={dateBtnClass(isThisMonthActive())}
 >
   هذا الشهر
 </button>
-    
 
     {/* Status */}
     <div>
@@ -955,6 +1138,7 @@ const [endDate, setEndDate] = useState<string | undefined>();
         <option value="ALL">الكل</option>
         <option value="OPEN">غير مدفوعة</option>
         <option value="PAID">مدفوعة</option>
+        <option value="CANCELED">ملغاة</option>
       </select>
     </div>
 
@@ -967,24 +1151,14 @@ const [endDate, setEndDate] = useState<string | undefined>();
       <input
           value={searchFilter}
           onChange={(e) => setSearchFilter(arabicToEnglishDigits(e.target.value))}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter')
-              loadInvoices(undefined, undefined, { search: searchFilter });
-          }}
+          
         className="w-full rounded-md border border-slate-300 px-3 py-2 text-xl focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
         placeholder="اكتب ثم اضغط بحث"
       />
     </div>
 
     {/* Action buttons */}
-    <button
-      type="button"
-      onClick={() => loadInvoices(undefined, undefined, { status: statusFilter, days: daysFilter, search: searchFilter })}
-      className="rounded-md bg-sky-600 px-4 py-2 text-xl font-bold text-white hover:bg-sky-700 disabled:opacity-60"
-      disabled={listLoading}
-    >
-      {listLoading ? 'جار البحث...' : 'بحث عن فاتورة'}
-    </button>
+    
 
     <button
        type="button"
@@ -1031,73 +1205,113 @@ const [endDate, setEndDate] = useState<string | undefined>();
                   </tr>
                 </thead>
                 <tbody>
-                  {invoices.map((inv) => (
-                    <tr key={inv.id} className="border-b last:border-0">
-                      <td className="px-3 py-2 font-mono text-xl font-semibold text-slate-700">
-                        {inv.ticketNumber.split('-').pop()}
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="text-slate-900 text-xl font-semibold">
-                          {inv.customer.name}
-                        </div>
-                        <div className="text-base text-slate-500">
-                          {inv.customer.phone}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2 text-base font-semibold">
-                        <span
-                          className={`rounded px-2 py-1 ${
-                            inv.status === 'OPEN'
-                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                              : inv.status === 'READY'
-                              ? 'bg-sky-50 text-sky-700 border border-sky-200'
-                              : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          }`}
-                        >
-                          {inv.status === 'OPEN' ? 
-                          'غير مدفوعة' : inv.status === 'READY' ? 'جاهزة' : 'مدفوعة'}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-xl font-semibold text-slate-500">
-                        {new Date(inv.createdAt).toLocaleString("ar-LB", {
-                          year: 'numeric',
-                          month: 'numeric',
-                          day: 'numeric',
-                          hour: 'numeric',
-                          minute: 'numeric',
-                          weekday: 'long',
-                        })}
-                      </td>
-                      <td className="px-3 py-2 text-right text-xl font-semibold text-slate-900">
-                        {inv.total.toLocaleString('en-LB', {
-                          minimumFractionDigits: 0,
-                          maximumFractionDigits: 0,
-                        })}
-                      </td>
-                      <td className="px-3 py-2 text-right text-xl font-semibold">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            handleView(inv);
-                            document.body.classList.add('modal-open')
-                          }}
-                          className="mr-2 rounded border border-slate-300 px-2 py-1 hover:bg-slate-100"
-                        > 
-                          عرض الفاتورة
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handlePrint(inv)}
-                          className='bg-sky-50 text-sky-700 border border-sky-200 mr-2 rounded border border-slate-300 px-2 py-1 hover:bg-slate-100'
-                        >
-                          طباعة الفاتورة
-                        </button>
-                      
-                        
-          
-                      </td>
-                    </tr>
-                  ))}
+                 {invoices.map((inv) => (
+  <tr key={inv.id} className="border-b last:border-0">
+    <td className="px-3 py-2 font-mono text-xl font-semibold text-slate-700">
+      {inv.ticketNumber.split('-').pop()}
+    </td>
+    <td className="px-3 py-2">
+      <div className="text-slate-900 text-base font-semibold">
+        {inv.customer.name}
+      </div>
+      <div className="text-base text-slate-500">{inv.customer.phone}</div>
+    </td>
+    <td className="px-3 py-2 text-base font-semibold">
+      <span
+        className={`rounded px-2 py-1 ${
+          inv.status === 'OPEN'
+            ? 'bg-amber-50 text-amber-700 border border-amber-200'
+            : inv.status === 'READY'
+            ? 'bg-sky-50 text-sky-700 border border-sky-200'
+            : inv.status === 'PAID'
+            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+            : 'bg-red-50 text-red-700 border border-red-200' // for CANCELED
+        }`}
+      >
+        {inv.status === 'OPEN'
+          ? 'غير مدفوعة'
+          : inv.status === 'READY'
+          ? 'جاهزة'
+          : inv.status === 'PAID'
+          ? 'مدفوعة'
+          : 'ملغاة'}
+      </span>
+    </td>
+    <td className="px-3 py-2 text-base font-semibold text-slate-500">
+      {new Date(inv.createdAt).toLocaleString('ar-LB', {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+        weekday: 'long',
+      })}
+    </td>
+    <td className="px-3 py-2 text-right text-xl font-semibold text-slate-900">
+      {inv.total.toLocaleString('en-LB', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      })}
+    </td>
+    <td className="px-3 py-2 text-right text-xl font-semibold flex gap-2 justify-end">
+      {/* View button */}
+      <button
+        type="button"
+        onClick={() => {
+          handleView(inv);
+          document.body.classList.add('modal-open');
+        }}
+        className="mr-2 rounded border border-slate-300 px-2 py-1 hover:bg-slate-100"
+      >
+        عرض 
+      </button>
+
+      {/* Print button */}
+      <button
+        type="button"
+        onClick={() => handlePrint(inv)}
+        className="bg-sky-50 text-sky-700 border border-sky-200 rounded px-2 py-1 hover:bg-slate-100"
+      >
+        طباعة 
+      </button>
+
+      {/* Edit button (only if not canceled or paid) */}
+      {inv.status !== 'PAID' && inv.status !== 'CANCELED' && (
+        <button
+          type="button"
+          onClick={() => handleEditInvoice(inv)}
+          className="bg-yellow-50 text-yellow-700 border border-yellow-200 rounded px-2 py-1 hover:bg-yellow-100"
+        >
+          تعديل
+        </button>
+      )}
+
+      {/* Cancel button (only if not paid or already canceled) */}
+      {inv.status !== 'PAID' && inv.status !== 'CANCELED' && (
+        <button
+          type="button"
+          onClick={async () => {
+            if (!confirm('هل أنت متأكد من إلغاء هذه الفاتورة؟')) return;
+            const res = await fetch('/api/invoices', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: inv.id, status: 'CANCELED' }),
+            });
+            if (res.ok) {
+              const updated = await res.json();
+              setInvoices((prev) =>
+                prev.map((i) => (i.id === updated.id ? updated : i))
+              );
+            }
+          }}
+          className="bg-red-50 text-red-700 border border-red-200 rounded px-2 py-1 hover:bg-red-100"
+        >
+          إلغاء
+        </button>
+      )}
+    </td>
+  </tr>
+))}
                 </tbody>
               </table>
             </div>
