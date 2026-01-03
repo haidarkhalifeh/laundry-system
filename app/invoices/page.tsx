@@ -8,7 +8,7 @@ import { useRef} from 'react';
 
 
 const frequentItemIds = [6, 7, 8, 1]; // IDs of the 30% most-used items
-const otherItemIds = [2, 3 ,4 ,5 , 9, 10, 11, 13, 14, 15, 16,18,21,19,20,22,23,24,12, 17]; // remaining IDs in your desired order
+const otherItemIds = [2,25, 3 ,4 ,5 ,27,28, 9, 10, 11, 13, 14, 15, 16,18,21,19,26,20,22,23,24,12, 17]; // remaining IDs in your desired order
 const USD_RATE = 90000; // 1 USD = 90,000 LBP
 
 type Customer = {
