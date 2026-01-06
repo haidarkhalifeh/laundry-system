@@ -53,7 +53,9 @@ model Invoice {
   id             Int            @id @default(autoincrement())
   ticketNumber   String         @unique
   status         InvoiceStatus  @default(OPEN)
+
   createdAt      DateTime       @default(now())
+  paidAt         DateTime?      // ✅ added (nullable)
 
   subtotal       Float          @default(0)
   adjustedAmount Float          @default(0) // can be negative or positive

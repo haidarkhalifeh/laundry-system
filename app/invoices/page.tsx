@@ -8,7 +8,7 @@ import { useRef} from 'react';
 
 
 const frequentItemIds = [6, 7, 8, 1]; // IDs of the 30% most-used items
-const otherItemIds = [2,25, 3 ,4 ,5 ,27,28, 9, 10, 11, 13, 14, 15, 16,18,21,19,26,20,22,23,24,12, 17]; // remaining IDs in your desired order
+const otherItemIds = [2,32,25, 3 ,4 ,5 ,27,28, 9, 10, 11, 13, 14, 15, 16,29,18,21,33,34,19,26,30,31,20,22,23,24,12, 17]; // remaining IDs in your desired order
 const USD_RATE = 90000; // 1 USD = 90,000 LBP
 
 type Customer = {
@@ -50,6 +50,7 @@ type Invoice = {
   notes: string | null;
   customer: Customer;
   items: InvoiceItemRow[];
+  paidAt: string | null;
 };
 
 type DraftItemRow = {
@@ -62,14 +63,19 @@ type DraftItemRow = {
 
 function normalizeAmountInput(raw: string): number {
   if (!raw.trim()) return 0;
+
   const num = Number(raw.replace(/,/g, ''));
-  if (Number.isNaN(num)) return 0;
-  if (num === 0) return 0;
+  if (Number.isNaN(num) || num === 0) return 0;
+
+  let value = num;
+
+  // USD → LBP
   if (Math.abs(num) < 1000) {
-    // treat as USD
-    return num * USD_RATE;
+    value = num * USD_RATE;
   }
-  return num;
+
+  // ✅ round to nearest 1,000 LBP
+  return Math.round(value / 1000) * 1000;
 }
 
 // helpers — place them near the top of the component file
@@ -103,10 +109,21 @@ function getWeekRange(date: Date) {
 
 function formatWithCommas(value: string) {
   if (!value) return '';
-  const sign = value.startsWith('-') ? '-' : '';
-  const num = value.replace(/[^0-9]/g, '');
-  if (!num) return sign;
-  return sign + Number(num).toLocaleString('en-US');
+
+  const isNegative = value.startsWith('-');
+  const clean = value.replace('-', '');
+
+  const [intPart, decimalPart] = clean.split('.');
+
+  const formattedInt = intPart
+    ? Number(intPart).toLocaleString('en-US')
+    : '0';
+
+  return (
+    (isNegative ? '-' : '') +
+    formattedInt +
+    (decimalPart !== undefined ? '.' + decimalPart : '')
+  );
 }
 
 function stripCommas(value: string) {
@@ -515,13 +532,15 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // mark as paid by ticketNumber (scanner / manual)
   async function handlePayByTicket(e: React.FormEvent) {
     e.preventDefault();
-
-    setErrors({invoice:undefined});
-    const ticket = "INV-"+new Date().getFullYear()+"-"+payTicketNumber.trim();
+  
+    setErrors({ invoice: undefined });
+  
+    const ticket =
+      "INV-" + new Date().getFullYear() + "-" + payTicketNumber.trim();
     if (!ticket) return;
-
+  
     const adjLb = normalizeAmountInput(payAdjustedAmount);
-
+  
     const res = await fetch('/api/invoices', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -529,15 +548,15 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
         ticketNumber: ticket,
         status: 'PAID',
         adjustedAmount: adjLb,
+        paidAt: new Date().toISOString(), // ✅ ADD THIS
       }),
     });
-
+  
     if (!res.ok) {
-      const err = await res.json().catch(() => null);
-      setErrors({invoice: 'الفاتورة غير موجودة '});
+      setErrors({ invoice: 'الفاتورة غير موجودة' });
       return;
     }
-
+  
     setPayTicketNumber('');
     setPayAdjustedAmount('');
     await loadInvoices();
@@ -845,48 +864,79 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 </div>
                       </td>
                       <td className="px-3 py-2 text-right">
-                      
-  <div className="flex items-center gap-2">
-    
+  <div className="flex flex-col gap-1">
+    <div className="flex items-center gap-2">
+      <input
+        type="text"
+        value={formatWithCommas(row.adjustedAmount)}
+        onChange={(e) => {
+          const raw = arabicToEnglishDigits(
+            e.target.value.replace(/[^0-9٠-٩\-\,]/g, '')
+          );
 
-    <input
-  type="text"
-  value={formatWithCommas(row.adjustedAmount)}
-  onChange={(e) => {
-    const raw = arabicToEnglishDigits(
-      e.target.value.replace(/[^0-9٠-٩\-\,]/g, '')
-    );
+          updateDraftRow(row.id, {
+            adjustedAmount: stripCommas(raw),
+          });
+        }}
+        placeholder="0"
+        className="w-28 text-center rounded-md border border-slate-300 px-2 py-1 text-base font-bold focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+      />
 
-    updateDraftRow(row.id, {
-      adjustedAmount: stripCommas(raw),
-    });
-  }}
-  placeholder="0"
-  className="w-28 text-center rounded-md border border-slate-300 px-2 py-1 text-base font-bold focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-/>
+      <button
+        type="button"
+        onClick={() => {
+          const current = String(row.adjustedAmount || '');
+          const toggled = current.startsWith('-')
+            ? current.slice(1)
+            : '-' + current;
 
-<button
-  type="button"
-  onClick={() => {
-    const current = String(row.adjustedAmount || '');
+          updateDraftRow(row.id, {
+            adjustedAmount: toggled,
+          });
+        }}
+        className={`w-8 h-8 flex items-center justify-center rounded-md font-bold border transition ${
+          String(row.adjustedAmount || '').startsWith('-')
+            ? 'bg-red-500 text-white'
+            : 'bg-slate-200'
+        } hover:bg-red-400`}
+      >
+        −
+      </button>
+    </div>
 
-    const toggled = current.startsWith('-')
-      ? current.slice(1)
-      : '-' + current;
-
-    updateDraftRow(row.id, {
-      adjustedAmount: toggled,
-    });
-  }}
-  className={`w-8 h-8 flex items-center justify-center rounded-md font-bold border transition ${
-    String(row.adjustedAmount || '').startsWith('-')
-      ? 'bg-red-500 text-white'
-      : 'bg-slate-200'
-  } hover:bg-red-400`}
->
-  −
-</button>
-
+    {/* Quick add */}
+     
+  {/* − (subtract 50,000) */}
+   {/* +50,000 */}
+   <div className='flex'>
+   <button
+    type="button"
+    onClick={() => {
+      const current = Number(stripCommas(row.adjustedAmount || '0'));
+      const next = current + 50000;
+      updateDraftRow(row.id, {
+        adjustedAmount: String(next),
+      });
+    }}
+    className="w-8 h-7 flex items-center justify-center rounded-md border border-slate-300 bg-emerald-100 text-sm font-bold text-emerald-700 hover:bg-emerald-200"
+  >
+    +50
+  </button>
+  <button
+    type="button"
+    onClick={() => {
+      const current = Number(stripCommas(row.adjustedAmount || '0'));
+      const next = current - 50000;
+      updateDraftRow(row.id, {
+        adjustedAmount: String(next),
+      });
+    }}
+    className="w-8 h-7 flex items-center justify-center rounded-md border border-slate-300 bg-red-100 text-sm font-bold text-red-700 hover:bg-red-200"
+  >
+    −50
+  </button>
+  </div>
+ 
 
   </div>
 </td>
@@ -1019,36 +1069,64 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
               التعديل على سعر الفاتورة
                 
               </label>
-              <div className="flex items-center gap-2">
- 
+              <div>
 
-  <input
-    type="text"
-    value={formatWithCommas(payAdjustedAmount)}
-    onChange={(e) => {
-      const raw = arabicToEnglishDigits(
-        e.target.value.replace(/[^0-9٠-٩\-\,]/g, '')
-      );
-      setPayAdjustedAmount(stripCommas(raw));
-    }}
-    placeholder="0"
-    className="w-32 rounded-md border border-slate-300 px-3 py-2 text-xl text-right focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-  />
+  {/* Input + sign toggle */}
+  <div className="flex items-center gap-2">
+    <input
+      type="text"
+      value={formatWithCommas(payAdjustedAmount)}
+      onChange={(e) => {
+        const raw = arabicToEnglishDigits(
+          e.target.value.replace(/[^0-9٠-٩\-\,\.]/g, '')
+        );
+        setPayAdjustedAmount(stripCommas(raw));
+      }}
+      placeholder="0"
+      className="w-32 rounded-md border border-slate-300 px-3 py-2 text-xl text-right focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+    />
 
-<button
-    type="button"
-    onClick={() =>
-      setPayAdjustedAmount((prev) => toggleNegative(prev))
-    }
-    className={`w-8 h-8 flex items-center justify-center rounded-md font-bold border transition ${
-      payAdjustedAmount.startsWith('-')
-        ? 'bg-red-500 text-white'
-        : 'bg-slate-200'
-    }`}
+    {/* Toggle sign */}
+    <button
+      type="button"
+      onClick={() => setPayAdjustedAmount((prev) => toggleNegative(prev))}
+      className={`w-8 h-8 flex items-center justify-center rounded-md font-bold border transition ${
+        payAdjustedAmount.startsWith('-')
+          ? 'bg-red-500 text-white'
+          : 'bg-slate-200'
+      }`}
+    >
+      −
+    </button>
+  </div>
 
-  >
-    −
-  </button>
+  {/* Quick adjust buttons */}
+  <div className="mt-1 flex justify-start gap-1">
+
+    {/* +100K */}
+    <button
+      type="button"
+      onClick={() => {
+        const current = Number(stripCommas(payAdjustedAmount || '0'));
+        setPayAdjustedAmount(String(current + 100000));
+      }}
+      className="w-8 h-7 flex items-center justify-center rounded-md border border-slate-300 bg-emerald-100 text-sm font-bold text-emerald-700 hover:bg-emerald-200"
+    >
+      +100
+    </button>
+    {/* −100K */}
+    <button
+      type="button"
+      onClick={() => {
+        const current = Number(stripCommas(payAdjustedAmount || '0'));
+        setPayAdjustedAmount(String(current - 100000));
+      }}
+      className="w-8 h-7 flex items-center justify-center rounded-md border border-slate-300 bg-red-100 text-sm font-bold text-red-700 hover:bg-red-200"
+    >
+      −100
+    </button>
+
+  </div>
 </div>
             </div>
             <button
@@ -1238,7 +1316,22 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
       </span>
     </td>
     <td className="px-3 py-2 text-base font-semibold text-slate-500">
-      {new Date(inv.createdAt).toLocaleString('ar-LB', {
+  <div>
+    {new Date(inv.createdAt).toLocaleString('ar-LB', {
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      weekday: 'long',
+    })}
+  </div>
+
+  {inv.status === 'PAID' && inv.paidAt && (
+    <div className="mt-1 text-sm font-medium text-emerald-600">
+      مدفوعة:
+      {' '}
+      {new Date(inv.paidAt).toLocaleString('ar-LB', {
         year: 'numeric',
         month: 'numeric',
         day: 'numeric',
@@ -1246,7 +1339,9 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
         minute: 'numeric',
         weekday: 'long',
       })}
-    </td>
+    </div>
+  )}
+</td>
     <td className="px-3 py-2 text-right text-xl font-semibold text-slate-900">
       {inv.total.toLocaleString('en-LB', {
         minimumFractionDigits: 0,

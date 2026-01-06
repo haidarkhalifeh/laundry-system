@@ -118,7 +118,7 @@ export default function ItemPricesPage() {
   }
 
   return (
-    <div dir="rtl" className="min-h-screen bg-slate-50 px-4 py-6">
+    <div  className="min-h-screen bg-slate-50 px-4 py-6">
       <div className="mx-auto max-w-5xl space-y-6">
         <header className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-slate-900">
@@ -146,14 +146,15 @@ export default function ItemPricesPage() {
               <select
                 value={selectedItemId}
                 onChange={(e) => setSelectedItemId(e.target.value)}
-                className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                className="text-slate-600 w-full rounded-md border border-slate-300 px-2 py-1 font-semibold focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-50"
               >
-                <option value="">حدد العنصر…</option>
+                <option value="" className='text-slate-600'>حدد العنصر…</option>
                 {items.map((it) => (
-                  <option key={it.id} value={it.id}>
+                  <option key={it.id} value={it.id} className="text-slate-600">
                     {it.name} {it.active ? '' : '(inactive)'}
                   </option>
                 ))}
+                
               </select>
             </div>
 

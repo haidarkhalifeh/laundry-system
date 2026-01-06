@@ -121,15 +121,35 @@ const [categoryFilter, setCategoryFilter] = useState('ALL');
   // handle amount input with comma formatting
   function handleAmountChange(e: React.ChangeEvent<HTMLInputElement>) {
     const converted = arabicToEnglishDigits(e.target.value);
-    const raw = converted.replace(/,/g, '');
-    if (raw === '') {
-      setFormAmount('');
+  
+    // allow digits, minus, dot, comma
+    const cleaned = converted.replace(/[^0-9\-.,]/g, '');
+  
+    // remove commas for internal value
+    const raw = cleaned.replace(/,/g, '');
+  
+    if (raw === '' || raw === '-') {
+      setFormAmount(raw);
       return;
     }
+  
+    // allow typing "12." without breaking
+    if (raw.endsWith('.')) {
+      setFormAmount(raw);
+      return;
+    }
+  
     const num = Number(raw);
     if (Number.isNaN(num)) return;
+  
+    const [intPart, decimalPart] = raw.split('.');
+  
+    const formattedInt = Number(intPart).toLocaleString('en-LB');
+  
     setFormAmount(
-      num.toLocaleString('en-LB', { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
+      decimalPart !== undefined
+        ? `${formattedInt}.${decimalPart}`
+        : formattedInt
     );
   }
 

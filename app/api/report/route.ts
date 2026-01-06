@@ -1,7 +1,8 @@
-// app/api/report/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { InvoiceStatus } from '@/app/generated/prisma/client';
+
+/* ===================== TYPES ===================== */
 
 type TopItem = {
   itemId: number;
@@ -26,19 +27,19 @@ type InvoiceItemRow = {
 
 type InvoiceWithRelations = {
   id: number;
+  ticketNumber?: string | null;
   total: number;
   createdAt: Date;
+  paidAt?: Date | null;
   customer?: { id: number | null; name?: string; phone?: string } | null;
   items: InvoiceItemRow[];
-  // ticketNumber may or may not exist — access via record when needed
-  [key: string]: unknown;
 };
 
 type InvoiceListItem = {
   id: number;
   ticketNumber: string | null;
   customer: { id: number | null; name: string; phone?: string } | null;
-  createdAt: Date;
+  date: Date;
   total: number;
 };
 
@@ -46,106 +47,100 @@ type TopInvoiceItem = {
   id: number;
   ticketNumber: string | null;
   customer: { id: number | null; name: string } | null;
-  createdAt: Date;
+  date: Date;
   total: number;
 };
+
+/* ===================== HANDLER ===================== */
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
 
   const today = new Date();
-  const todayStr = today.toISOString().slice(0, 10); // yyyy-mm-dd
+  const todayStr = today.toISOString().slice(0, 10);
 
   const fromParam = searchParams.get('from') || todayStr;
   const toParam = searchParams.get('to') || todayStr;
 
-  // interpret as date-only range [from, to+1day)
   const from = new Date(fromParam);
   const to = new Date(toParam);
-  to.setDate(to.getDate() + 1);
+  to.setDate(to.getDate() + 1); // inclusive range
 
-  // --- parse options ---
+  /* ---------- OPTIONS ---------- */
   const includeTopItems = searchParams.get('includeTopItems') !== '0';
   const includeTopCustomers = searchParams.get('includeTopCustomers') !== '0';
   const includeInvoices = searchParams.get('includeInvoices') !== '0';
   const includeTopInvoices = searchParams.get('includeTopInvoices') !== '0';
 
   const topItemsLimit = Number(searchParams.get('topItemsLimit') ?? '10') || 10;
-  const topInvoicesLimit = Number(searchParams.get('topInvoicesLimit') ?? '') || topItemsLimit;
+  const topInvoicesLimit =
+    Number(searchParams.get('topInvoicesLimit') ?? '') || topItemsLimit;
 
   const parseCSV = (s: string | null) =>
-    (s || '')
-      .split(',')
-      .map((t) => t.trim())
-      .filter(Boolean);
+    (s || '').split(',').map(t => t.trim()).filter(Boolean);
 
   const excludeItemsTokens = parseCSV(searchParams.get('excludeItems'));
   const excludeCustomersTokens = parseCSV(searchParams.get('excludeCustomers'));
   const excludeInvoicesTokens = parseCSV(searchParams.get('excludeInvoices'));
   const excludeTopInvoicesTokens = parseCSV(searchParams.get('excludeTopInvoices'));
 
-  // helper: returns true if any token matches numeric id or substring (case-insensitive)
   const matchesToken = (value: string | number | null, tokens: string[]) => {
-    if (!tokens || tokens.length === 0) return false;
-    const valStr = value == null ? '' : String(value).toLowerCase();
-    for (const t of tokens) {
-      const tt = t.toLowerCase();
-      if (!tt) continue;
-      if (/^\d+$/.test(tt)) {
-        if (String(valStr) === tt) return true;
-        if (String(valStr).includes(tt)) return true;
-      } else {
-        if (valStr.includes(tt)) return true;
-      }
-    }
-    return false;
+    if (!tokens.length) return false;
+    const val = String(value ?? '').toLowerCase();
+    return tokens.some(t => val.includes(t.toLowerCase()));
   };
 
-  // 1) Fetch paid invoices in range — include customer and items
-    const paidInvoicesRaw = await prisma.invoice.findMany({
-      where: {
-        status: InvoiceStatus.PAID,
-        createdAt: {
-          gte: from,
-          lt: to,
-        },
-      },
-      include: {
-        customer: true,
-        items: {
-          include: {
-            item: true,
-          },
-        },
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+  /* ===================== 1) PAID INVOICES (PAID AT) ===================== */
 
-  // Type the result into our narrower InvoiceWithRelations shape
-  const paidInvoices: InvoiceWithRelations[] = paidInvoicesRaw.map((inv) => inv as unknown as InvoiceWithRelations);
+  const paidInvoicesRaw = await prisma.invoice.findMany({
+    where: {
+      status: InvoiceStatus.PAID,
+      paidAt: {
+        gte: from,
+        lt: to,
+      },
+    },
+    include: {
+      customer: true,
+      items: {
+        include: { item: true },
+      },
+    },
+    orderBy: {
+      paidAt: 'desc',
+    },
+  });
 
-  // 2) Apply invoice-level exclusions (excludeInvoices, excludeCustomers)
-  const invoicesFiltered = paidInvoices.filter((inv) => {
+  const invoices: InvoiceWithRelations[] =
+    paidInvoicesRaw as unknown as InvoiceWithRelations[];
+
+  /* ===================== 2) FILTER INVOICES ===================== */
+
+  const invoicesFiltered = invoices.filter(inv => {
     const customerName = inv.customer?.name ?? '';
     const customerId = inv.customer?.id ?? null;
 
-    if (excludeCustomersTokens.length > 0) {
-      if (matchesToken(customerName, excludeCustomersTokens)) return false;
-      if (customerId !== null && matchesToken(String(customerId), excludeCustomersTokens)) return false;
+    if (
+      excludeCustomersTokens.length &&
+      (matchesToken(customerName, excludeCustomersTokens) ||
+        matchesToken(customerId, excludeCustomersTokens))
+    ) {
+      return false;
     }
 
-    const ticketNumber = String((inv as Record<string, unknown>)['ticketNumber'] ?? '');
-    if (excludeInvoicesTokens.length > 0) {
-      if (matchesToken(ticketNumber, excludeInvoicesTokens)) return false;
-      if (matchesToken(String(inv.id), excludeInvoicesTokens)) return false;
+    if (
+      excludeInvoicesTokens.length &&
+      (matchesToken(inv.ticketNumber ?? '', excludeInvoicesTokens) ||
+        matchesToken(inv.id, excludeInvoicesTokens))
+    ) {
+      return false;
     }
 
     return true;
   });
 
-  // 3) Expenses in range
+  /* ===================== 3) EXPENSES ===================== */
+
   const expenses = await prisma.expense.findMany({
     where: {
       createdAt: {
@@ -155,173 +150,164 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  // 4) Compute revenueTotal and invoice count (apply excludeItems when summing)
+  /* ===================== 4) REVENUE ===================== */
+
   let revenueTotal = 0;
-  const revenueInvoiceCount = invoicesFiltered.length;
 
   for (const inv of invoicesFiltered) {
-    if (excludeItemsTokens.length > 0) {
-      let invoiceSum = 0;
-      for (const line of inv.items) {
-        const itemId = line.itemId;
-        const itemName = line.item?.name ?? '';
-        if (matchesToken(String(itemId), excludeItemsTokens) || matchesToken(itemName, excludeItemsTokens)) {
-          continue;
-        }
-        invoiceSum += line.lineTotal;
-      }
-      revenueTotal += invoiceSum;
+    if (excludeItemsTokens.length) {
+      revenueTotal += inv.items.reduce((s, l) => {
+        const name = l.item?.name ?? '';
+        if (
+          matchesToken(l.itemId, excludeItemsTokens) ||
+          matchesToken(name, excludeItemsTokens)
+        )
+          return s;
+        return s + l.lineTotal;
+      }, 0);
     } else {
       revenueTotal += inv.total;
     }
   }
 
-  // 5) Expense totals
+  const revenueInvoiceCount = invoicesFiltered.length;
+
+  /* ===================== 5) EXPENSE TOTAL ===================== */
+
   const expenseTotal = expenses.reduce((s, e) => s + e.amount, 0);
   const expenseCount = expenses.length;
 
-  // 6) Top items aggregation
+  /* ===================== 6) TOP ITEMS ===================== */
+
   const itemMap = new Map<number, TopItem>();
+
   if (includeTopItems) {
     for (const inv of invoicesFiltered) {
       for (const line of inv.items) {
         const itemId = line.itemId;
         const itemName = line.item?.name ?? `Item #${itemId}`;
 
-        if (excludeItemsTokens.length > 0) {
-          if (matchesToken(String(itemId), excludeItemsTokens) || matchesToken(itemName, excludeItemsTokens)) {
-            continue;
-          }
-        }
-
-        const quantity = line.quantity;
-        const amount = line.lineTotal;
+        if (
+          excludeItemsTokens.length &&
+          (matchesToken(itemId, excludeItemsTokens) ||
+            matchesToken(itemName, excludeItemsTokens))
+        )
+          continue;
 
         const existing = itemMap.get(itemId);
         if (!existing) {
           itemMap.set(itemId, {
             itemId,
             itemName,
-            quantity,
-            amount,
+            quantity: line.quantity,
+            amount: line.lineTotal,
           });
         } else {
-          existing.quantity += quantity;
-          existing.amount += amount;
+          existing.quantity += line.quantity;
+          existing.amount += line.lineTotal;
         }
       }
     }
   }
-  const topItems = Array.from(itemMap.values()).sort((a, b) => b.amount - a.amount).slice(0, topItemsLimit);
 
-  // 7) Top customers aggregation
+  const topItems = Array.from(itemMap.values())
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, topItemsLimit);
+
+  /* ===================== 7) TOP CUSTOMERS ===================== */
+
   const customerMap = new Map<string, TopCustomer>();
+
   if (includeTopCustomers) {
     for (const inv of invoicesFiltered) {
       const cust = inv.customer;
-      const customerKey = cust ? String(cust.id) : 'unknown';
+      const key = String(cust?.id ?? 'unknown');
       const name = cust?.name ?? 'غير معروف';
 
-      const lineTotalForInvoice = excludeItemsTokens.length > 0
-        ? inv.items.reduce((s: number, l: InvoiceItemRow) => {
-            const itemId = l.itemId;
+      const amount = excludeItemsTokens.length
+        ? inv.items.reduce((s, l) => {
             const itemName = l.item?.name ?? '';
-            if (matchesToken(String(itemId), excludeItemsTokens) || matchesToken(itemName, excludeItemsTokens)) {
+            if (
+              matchesToken(l.itemId, excludeItemsTokens) ||
+              matchesToken(itemName, excludeItemsTokens)
+            )
               return s;
-            }
             return s + l.lineTotal;
           }, 0)
         : inv.total;
 
-      const existing = customerMap.get(customerKey);
+      const existing = customerMap.get(key);
       if (!existing) {
-        customerMap.set(customerKey, {
+        customerMap.set(key, {
           customerId: cust?.id ?? null,
           name,
           invoiceCount: 1,
-          amount: lineTotalForInvoice,
+          amount,
         });
       } else {
         existing.invoiceCount += 1;
-        existing.amount += lineTotalForInvoice;
+        existing.amount += amount;
       }
     }
   }
-    // top customers based on total amount (highest spenders first), tie-breaker by invoice count
-    const topCustomers = Array.from(customerMap.values()).sort((a, b) => {
-      if (b.amount !== a.amount) return b.amount - a.amount;
-      return b.invoiceCount - a.invoiceCount;
-    });
 
-  // 8) Invoices list (respect includeInvoices and exclusions)
-    // 8) Invoices list (respect includeInvoices and exclusions) — sort by date (newest first)
-    const invoicesList: InvoiceListItem[] = includeInvoices
+  const topCustomers = Array.from(customerMap.values()).sort((a, b) => {
+    if (b.amount !== a.amount) return b.amount - a.amount;
+    return b.invoiceCount - a.invoiceCount;
+  });
+
+  /* ===================== 8) INVOICE LIST ===================== */
+
+  const invoicesList: InvoiceListItem[] = includeInvoices
     ? invoicesFiltered
-        .slice() // clone
-        .sort((a, b) => (b.createdAt.getTime ? (b.createdAt.getTime() - a.createdAt.getTime()) : 0))
-        .map((inv) => {
-          const ticketNumberStr = String((inv as Record<string, unknown>)['ticketNumber'] ?? null);
-          const totalAdjusted = excludeItemsTokens.length > 0
-            ? inv.items.reduce((s: number, l: InvoiceItemRow) => {
-                const itemId = l.itemId;
-                const itemName = l.item?.name ?? '';
-                if (matchesToken(String(itemId), excludeItemsTokens) || matchesToken(itemName, excludeItemsTokens)) {
-                  return s;
-                }
-                return s + l.lineTotal;
-              }, 0)
-            : inv.total;
-
-          return {
-            id: inv.id,
-            ticketNumber: ticketNumberStr || null,
-            customer: inv.customer ? { id: inv.customer.id ?? null, name: inv.customer.name ?? '', phone: inv.customer.phone ?? undefined } : null,
-            createdAt: inv.createdAt,
-            total: totalAdjusted,
-          };
-        })
+        .slice()
+        .sort(
+          (a, b) =>
+            (b.paidAt?.getTime() ?? 0) - (a.paidAt?.getTime() ?? 0),
+        )
+        .map(inv => ({
+          id: inv.id,
+          ticketNumber: inv.ticketNumber ?? null,
+          customer: inv.customer
+            ? {
+                id: inv.customer.id ?? null,
+                name: inv.customer.name ?? '',
+                phone: inv.customer.phone ?? undefined,
+              }
+            : null,
+          date: inv.paidAt ?? inv.createdAt,
+          total: inv.total,
+        }))
     : [];
 
-  // 9) Top invoices
-  const topInvoicesArr: TopInvoiceItem[] = [];
+  /* ===================== 9) TOP INVOICES ===================== */
+
+  const topInvoices: TopInvoiceItem[] = [];
+
   if (includeTopInvoices) {
-    const candidate = invoicesFiltered.filter((inv) => {
-      const ticket = String((inv as Record<string, unknown>)['ticketNumber'] ?? '');
-      if (excludeTopInvoicesTokens.length > 0) {
-        if (matchesToken(ticket, excludeTopInvoicesTokens)) return false;
-        if (matchesToken(String(inv.id), excludeTopInvoicesTokens)) return false;
-      }
-      return true;
-    });
-
-    const withTotals: TopInvoiceItem[] = candidate.map((inv) => {
-      const total = excludeItemsTokens.length > 0
-        ? inv.items.reduce((s: number, l: InvoiceItemRow) => {
-            const itemId = l.itemId;
-            const itemName = l.item?.name ?? '';
-            if (matchesToken(String(itemId), excludeItemsTokens) || matchesToken(itemName, excludeItemsTokens)) {
-              return s;
-            }
-            return s + l.lineTotal;
-          }, 0)
-        : inv.total;
-
-      return {
+    invoicesFiltered
+      .filter(inv => {
+        if (!excludeTopInvoicesTokens.length) return true;
+        return !(
+          matchesToken(inv.ticketNumber ?? '', excludeTopInvoicesTokens) ||
+          matchesToken(inv.id, excludeTopInvoicesTokens)
+        );
+      })
+      .map(inv => ({
         id: inv.id,
-        ticketNumber: String((inv as Record<string, unknown>)['ticketNumber'] ?? null) || null,
-        customer: inv.customer ? { id: inv.customer.id ?? null, name: inv.customer.name ?? '' } : null,
-        createdAt: inv.createdAt,
-        total,
-      };
-    });
-
-    withTotals
+        ticketNumber: inv.ticketNumber ?? null,
+        customer: inv.customer
+          ? { id: inv.customer.id ?? null, name: inv.customer.name ?? '' }
+          : null,
+        date: inv.paidAt ?? inv.createdAt,
+        total: inv.total,
+      }))
       .sort((a, b) => b.total - a.total)
       .slice(0, topInvoicesLimit)
-      .forEach((t) => topInvoicesArr.push(t));
+      .forEach(i => topInvoices.push(i));
   }
 
-  const netTotal = revenueTotal - expenseTotal;
+  /* ===================== FINAL ===================== */
 
   return NextResponse.json({
     from: fromParam,
@@ -330,10 +316,10 @@ export async function GET(request: NextRequest) {
     revenueInvoiceCount,
     expenseTotal,
     expenseCount,
-    netTotal,
+    netTotal: revenueTotal - expenseTotal,
     topItems,
     topCustomers,
     invoicesList,
-    topInvoices: topInvoicesArr,
+    topInvoices,
   });
 }

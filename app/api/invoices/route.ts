@@ -24,30 +24,59 @@ export async function GET(request: NextRequest) {
 
   const where: Prisma.InvoiceWhereInput = {};
 
-  // filter by status
-  if (statusParam === 'OPEN' || statusParam === 'READY' || statusParam === 'PAID' || statusParam === 'CANCELED') {
+  // ---------- STATUS ----------
+  if (
+    statusParam === 'OPEN' ||
+    statusParam === 'READY' ||
+    statusParam === 'PAID' ||
+    statusParam === 'CANCELED'
+  ) {
     where.status = statusParam as InvoiceStatus;
   }
 
-  // filter by date range
-  if (startParam || endParam) {
-    where.createdAt = {};
-    if (startParam) {
-      const start = new Date(startParam);
-      if (!isNaN(start.getTime())) where.createdAt.gte = start;
-    }
-    if (endParam) {
-      const end = new Date(endParam);
-      if (!isNaN(end.getTime())) where.createdAt.lte = end;
-    }
-  }
+  // ---------- DATE RANGE (CREATED OR PAID) ----------
+if (startParam || endParam) {
+  const start = startParam ? new Date(startParam) : undefined;
+  const end = endParam ? new Date(endParam + 'T23:59:59.999') : undefined;
 
-  // ticketNumber exact match
+  const createdRange = {
+    ...(start && !isNaN(start.getTime()) && { gte: start }),
+    ...(end && !isNaN(end.getTime()) && { lte: end }),
+  };
+
+  const paidRange = {
+    ...(start && !isNaN(start.getTime()) && { gte: start }),
+    ...(end && !isNaN(end.getTime()) && { lte: end }),
+  };
+
+  if (statusParam === 'PAID') {
+    // ONLY paidAt
+    where.paidAt = paidRange;
+  } else if (statusParam === 'OPEN' || statusParam === 'CANCELED') {
+    // ONLY createdAt
+    where.createdAt = createdRange;
+  } else {
+    // ALL statuses → split logic safely
+    where.OR = [
+      {
+        status: { in: ['OPEN', 'CANCELED'] },
+        createdAt: createdRange,
+      },
+      {
+        status: 'PAID',
+        paidAt: paidRange,
+      },
+    ];
+  }
+}
+
+  // ---------- SEARCH ----------
   if (ticketNumber) {
     where.ticketNumber = ticketNumber;
   } else if (search && search.trim() !== '') {
     const term = search.trim();
     where.OR = [
+      ...(where.OR ?? []),
       { ticketNumber: { contains: term } },
       { customer: { name: { contains: term } } },
       { customer: { phone: { contains: term } } },
@@ -169,6 +198,7 @@ export async function PUT(request: NextRequest) {
     ticketNumber?: string;
     status?: InvoiceStatus;
     adjustedAmount?: number;
+    paidAt?: string;
     items?: { itemId?: number; serviceTypeId?: number; quantity?: number; adjustedAmount?: number }[];
   };
 
@@ -191,6 +221,11 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Only OPEN invoices can be canceled' }, { status: 400 });
 
     data.status = body.status;
+    if (body.status === 'PAID') {
+      data.paidAt = body.paidAt
+        ? new Date(body.paidAt)
+        : new Date();
+    }
   }
 
   // --- handle adjustedAmount ---

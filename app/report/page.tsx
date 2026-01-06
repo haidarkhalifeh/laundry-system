@@ -24,6 +24,7 @@ type InvoiceListItem = {
   customer: { id: number | null; name: string; phone?: string } | null;
   createdAt: string;
   total: number;
+  paidAt: string | null;
 };
 
 type TopInvoiceItem = {
