@@ -8,7 +8,7 @@ import { useRef} from 'react';
 
 
 const frequentItemIds = [6, 7, 8, 1]; // IDs of the 30% most-used items
-const otherItemIds = [2,32,25, 3 ,4 ,5 ,27,28, 9, 10, 11, 13, 14, 15, 16,29,18,21,33,34,19,26,30,31,20,22,23,24,12, 17]; // remaining IDs in your desired order
+const otherItemIds = [2,32,25, 3 ,4 ,5 ,27,28, 9, 10, 11, 13, 14, 15, 16,29,37,18,21,33,34,19,36,26,30,31,20,22,35,23,24,12, 17]; // remaining IDs in your desired order
 const USD_RATE = 90000; // 1 USD = 90,000 LBP
 
 type Customer = {
@@ -170,7 +170,7 @@ useEffect(() => {
   // mark as paid / scanner
   const [payTicketNumber, setPayTicketNumber] = useState('');
   const [payAdjustedAmount, setPayAdjustedAmount] = useState('');
-
+  const [existingCustomerMatch, setExistingCustomerMatch] = useState<Customer | null>(null);
   // selected invoice for view/print
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [printMode, setPrintMode] = useState(false);
@@ -325,32 +325,49 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   async function handleCreateCustomerInline(e: React.FormEvent) {
     e.preventDefault();
+  
     const name = newCustName.trim();
-    const phone = newCustPhone.trim();
-    
-
-    setErrors({createCustomer:undefined});
+    const phone = newCustPhone.trim() || null;
+  
+    setErrors({ createCustomer: undefined });
+  
     if (!name) {
-      setErrors({createCustomer:'الاسم مطلوب'});
+      setErrors({ createCustomer: 'الاسم مطلوب' });
       return;
     }
+  
+    // 🔍 check for existing customer with same name
+    const res = await fetch(`/api/customers?search=${encodeURIComponent(name)}`);
+    const matches = (await res.json()) as Customer[];
+  
+    if (matches.length > 0) {
+      setExistingCustomerMatch(matches[0]);
+      return; // ⛔ stop here and ask user
+    }
+  
+    await createCustomer(name, phone);
+  }
 
+  async function createCustomer(name: string, phone: string | null) {
     const res = await fetch('/api/customers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, phone }),
     });
-
+  
     if (!res.ok) {
       const err = await res.json().catch(() => null);
-      alert(err?.error || 'فشل في إنشاء عميل، تحدث إلى الدعم');
+      setErrors({ createCustomer: err?.error || 'فشل في إنشاء الزبون' });
       return;
     }
-
+  
     const customer = (await res.json()) as Customer;
+  
     setSelectedCustomer(customer);
     setCustomerResults([]);
-    setCustomerSearch(`${customer.name} (${customer.phone})`);
+    setCustomerSearch(
+      `${customer.name}${customer.phone ? ` (${customer.phone})` : ''}`
+    );
     setNewCustName('');
     setNewCustPhone('');
   }
@@ -599,6 +616,26 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     }, 100);
   }
 
+  const sortedInvoices = [...invoices].sort((a, b) => {
+    // If both are PAID → sort by paidAt
+    if (a.status === 'PAID' && b.status === 'PAID') {
+      return (
+        new Date(b.paidAt ?? 0).getTime() -
+        new Date(a.paidAt ?? 0).getTime()
+      );
+    }
+  
+    // If one is PAID and the other is not → PAID first (optional)
+    if (a.status === 'PAID' && b.status !== 'PAID') return -1;
+    if (a.status !== 'PAID' && b.status === 'PAID') return 1;
+  
+    // Otherwise → sort by createdAt
+    return (
+      new Date(b.createdAt).getTime() -
+      new Date(a.createdAt).getTime()
+    );
+  });
+
   return (
     <>
 
@@ -728,6 +765,50 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
                   حفظ واختيار الزبون
                 </button>
               </form>
+              {existingCustomerMatch && (
+  <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 space-y-2">
+    <div className="text-sm font-semibold text-amber-800">
+      يوجد زبون بنفس الاسم
+    </div>
+
+    <div className="text-sm text-slate-700">
+      {existingCustomerMatch.name}
+      {existingCustomerMatch.phone && ` – ${existingCustomerMatch.phone}`}
+    </div>
+
+    <div className="flex gap-2">
+      <button
+        type="button"
+        onClick={() => {
+          setSelectedCustomer(existingCustomerMatch);
+          setCustomerResults([]);
+          setCustomerSearch(
+            `${existingCustomerMatch.name}${
+              existingCustomerMatch.phone ? ` (${existingCustomerMatch.phone})` : ''
+            }`
+          );
+          setExistingCustomerMatch(null);
+          setNewCustName('');
+          setNewCustPhone('');
+        }}
+        className="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-sky-700"
+      >
+        استخدمه
+      </button>
+
+      <button
+        type="button"
+        onClick={async () => {
+          await createCustomer(newCustName.trim(), newCustPhone.trim() || null);
+          setExistingCustomerMatch(null);
+        }}
+        className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700"
+      >
+        أنشئ زبون جديد
+      </button>
+    </div>
+  </div>
+)}
             </div>
           </div>
 
@@ -1283,7 +1364,7 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
                   </tr>
                 </thead>
                 <tbody>
-                 {invoices.map((inv) => (
+                 {sortedInvoices.map((inv) => (
   <tr key={inv.id} className="border-b last:border-0">
     <td className="px-3 py-2 font-mono text-xl font-semibold text-slate-700">
       {inv.ticketNumber.split('-').pop()}
@@ -1370,6 +1451,8 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
         طباعة 
       </button>
 
+
+
       {/* Edit button (only if not canceled or paid) */}
       {inv.status !== 'PAID' && inv.status !== 'CANCELED' && (
         <button
@@ -1405,6 +1488,7 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
         </button>
       )}
     </td>
+    
   </tr>
 ))}
                 </tbody>
@@ -1538,6 +1622,11 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
             })}{' '}
             $
           </div>
+          {selectedInvoice.status === 'PAID' && (
+  <div className="mt-2 inline-block rounded-md px-4 py-1 text-3xl font-bold text-emerald-700 print:text-black">
+    واصل
+  </div>
+)}
         </div>
          {/* Barcode (for scanner) */}
          <div className="flex flex-col items-center py-3">

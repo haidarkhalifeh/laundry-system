@@ -12,6 +12,7 @@ type Customer = {
 };
 
 export default function CustomersPage() {
+  const [sortBy, setSortBy] = useState<'date' | 'name'>('date');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -128,6 +129,14 @@ export default function CustomersPage() {
     setPhone('');
     setAddress('');
   }
+  const sortedCustomers = [...customers].sort((a, b) => {
+    if (sortBy === 'name') {
+      return a.name.localeCompare(b.name, 'ar');
+    }
+  
+    // default: by date (newest first)
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
 
   return (
     <div dir="rtl" className="min-h-screen bg-slate-50 px-4 py-6">
@@ -154,6 +163,14 @@ export default function CustomersPage() {
             <option value="30">آخر ٣٠ أيام</option>
             <option value="90">آخر ٩٠ أيام</option>
           </select>
+          <select
+  value={sortBy}
+  onChange={(e) => setSortBy(e.target.value as 'date' | 'name')}
+  className="rounded-md border px-3 py-2 text-sm"
+>
+  <option value="date">الأحدث أولاً</option>
+  <option value="name">ترتيب أبجدي (أ–ي)</option>
+</select>
           <button className="rounded-md bg-sky-600 px-4 py-2 text-white">
             بحث
           </button>
@@ -221,7 +238,7 @@ export default function CustomersPage() {
               </tr>
             </thead>
             <tbody>
-              {customers.map((c) => (
+              {sortedCustomers.map((c) => (
                 <tr key={c.id} className="border-b">
                   <td className="px-3 py-2">{c.name}</td>
                   <td className="px-3 py-2">{c.phone || '-'}</td>
