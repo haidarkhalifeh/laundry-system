@@ -395,6 +395,11 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
       endDate === formatDateYYYYMMDD(lastDay)
     );
   };
+
+  const isAllActive = () => {
+  return !startDate && !endDate && !daysFilter;
+};
+
   const dateBtnClass = (active: boolean) =>
     `rounded-md px-4 py-2 font-semibold transition ${
       active
@@ -1278,6 +1283,28 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 >
   هذا الشهر
 </button>
+
+<button
+  type="button"
+  onClick={() => {
+    setStartDate(undefined);
+    setEndDate(undefined);
+    setDaysFilter(''); // 👈 هذا هو المفتاح
+
+    loadInvoices(undefined, undefined, {
+      status: statusFilter,
+      search: searchFilter,
+      days: '',
+    });
+  }}
+  className={dateBtnClass(isAllActive())}
+>
+  الكل
+</button>
+
+
+
+
 
     {/* Status */}
     <div>
