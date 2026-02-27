@@ -54,6 +54,8 @@ type Invoice = {
   paidAt: string | null;
 };
 
+// Extend Invoice locally with a temporary flag
+type InvoiceWithFlag = Invoice & { readySent?: boolean };
 type DraftItemRow = {
   id: number;
   itemId: number | '';
@@ -163,7 +165,7 @@ useEffect(() => {
   const [creating, setCreating] = useState(false);
 
   // list / filters
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceWithFlag[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'OPEN' | 'READY' | 'PAID'>('OPEN');
   const [daysFilter, setDaysFilter] = useState('7');
@@ -591,14 +593,14 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     ticketInputRef.current?.focus();
   }
 
-  const handleReady = async (inv: Invoice) => {
+  const handleReady = async (inv: InvoiceWithFlag) => {
     try {
       const res = await fetch('/api/invoices', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: inv.id,
-          status: 'READY', // only actually updates DB if OPEN on backend
+          status: 'READY', // backend handles whether it actually updates DB
         }),
       });
   
@@ -607,8 +609,8 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
         return;
       }
   
-      // Remove button / mark as sent in UI
-      setInvoices((prev: Invoice[]) =>
+      // Mark as sent in UI
+      setInvoices((prev) =>
         prev.map((i) =>
           i.id === inv.id ? { ...i, readySent: true } : i
         )
@@ -1572,6 +1574,16 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
           إلغاء
         </button>
       )}
+
+{(inv.status === 'OPEN' || inv.status === 'PAID') && !inv.readySent && (
+  <button
+    type="button"
+    onClick={() => handleReady(inv)}
+    className="bg-sky-50 text-sky-700 border border-sky-200 rounded px-2 py-1 hover:bg-sky-100"
+  >
+    جاهزة
+  </button>
+)}
 
 {(inv.status === 'OPEN' || inv.status === 'PAID') && (
   <button

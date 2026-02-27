@@ -52,14 +52,14 @@ if (startParam || endParam) {
   if (statusParam === 'PAID') {
     // ONLY paidAt
     where.paidAt = paidRange;
-  } else if (statusParam === 'OPEN' || statusParam === 'CANCELED') {
+  } else if (statusParam === 'OPEN' || statusParam === 'CANCELED' || statusParam === 'READY') {
     // ONLY createdAt
     where.createdAt = createdRange;
   } else {
     // ALL statuses → split logic safely
     where.OR = [
       {
-        status: { in: ['OPEN', 'CANCELED'] },
+        status: { in: ['OPEN', 'CANCELED', 'READY'] },
         createdAt: createdRange,
       },
       {
