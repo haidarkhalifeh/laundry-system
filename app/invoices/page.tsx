@@ -8,8 +8,9 @@ import { useRef} from 'react';
 
 
 const frequentItemIds = [6, 7, 8, 1]; // IDs of the 30% most-used items
-const otherItemIds = [2,32,25, 3 ,4 ,5 ,27,28, 9, 10, 11, 13, 14, 15, 16,29,37,18,21,33,34,19,36,26,30,31,20,22,35,23,24,12, 17]; // remaining IDs in your desired order
+const otherItemIds = [2,32,25, 3 ,4 ,5 ,27,28, 9, 10, 11,38, 13, 14, 15, 16,29,37,18,21,33,34,19,36,26,30,31,20,22,35,40,23,24,12, 17]; // remaining IDs in your desired order
 const USD_RATE = 90000; // 1 USD = 90,000 LBP
+
 
 type Customer = {
   id: number;
@@ -64,6 +65,7 @@ type DraftItemRow = {
 function normalizeAmountInput(raw: string): number {
   if (!raw.trim()) return 0;
 
+  
   const num = Number(raw.replace(/,/g, ''));
   if (Number.isNaN(num) || num === 0) return 0;
 
@@ -137,7 +139,7 @@ function stripCommas(value: string) {
 export default function InvoicesPage() {
   const ticketInputRef = useRef<HTMLInputElement | null>(null);
   
-
+ 
 useEffect(() => {
   // initial focus on mount
   ticketInputRef.current?.focus();
@@ -191,6 +193,10 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   };
   
   const [errors, setErrors] = useState<Errors>({});
+  const totalInvoices = invoices.reduce(
+    (sum, invoice) => sum + (invoice.total || 0),
+    0
+  );
   // ---- data loading ----
   async function loadItems() {
     const res = await fetch('/api/items');
@@ -584,6 +590,35 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     await loadInvoices();
     ticketInputRef.current?.focus();
   }
+
+  const handleReady = async (inv: Invoice) => {
+    try {
+      const res = await fetch('/api/invoices', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: inv.id,
+          status: 'READY', // only actually updates DB if OPEN on backend
+        }),
+      });
+  
+      if (!res.ok) {
+        alert('فشل إرسال الإشعار أو تحديث الحالة');
+        return;
+      }
+  
+      // Remove button / mark as sent in UI
+      setInvoices((prev: Invoice[]) =>
+        prev.map((i) =>
+          i.id === inv.id ? { ...i, readySent: true } : i
+        )
+      );
+    } catch (error) {
+      console.error('Ready update/send error:', error);
+      alert('حدث خطأ أثناء إرسال الإشعار');
+    }
+  };
+
 
   // ---- printing ----
   function handleView(inv: Invoice) {
@@ -1364,14 +1399,37 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   <br />
 </div>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-2xl font-semibold text-slate-900">
-            قائمة الفواتير
-            </h2>
-            <span className="text-base font-semibold text-slate-500">
-              {invoices.length.toLocaleString("ar-LB")} فواتير
-            </span>
-          </div>
+<div className="mb-3 flex items-center justify-between">
+  <div>
+    <h2 className="text-2xl font-semibold text-slate-900">
+      قائمة الفواتير
+    </h2>
+
+    {/* Show ONLY when Today filter is active */}
+    {isTodayActive() && (
+      <>
+        <div className="text-2xl font-bold text-emerald-900">
+          {totalInvoices.toLocaleString("en-LB", {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0,
+          })} ليرة
+        </div>
+
+        <div className="text-xl text-emerald-700">
+          {(totalInvoices / USD_RATE).toLocaleString("en-LB", {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0,
+          })} $ تقريبًا
+        </div>
+      </>
+    )}
+  </div>
+
+  <span className="text-base font-semibold text-slate-500">
+    {invoices.length.toLocaleString("ar-LB")} فواتير
+  </span>
+</div>
+
 
           {invoices.length === 0 ? (
             <p className="text-base font-semibold text-slate-500">
@@ -1514,6 +1572,17 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
           إلغاء
         </button>
       )}
+
+{(inv.status === 'OPEN' || inv.status === 'PAID') && (
+  <button
+    type="button"
+    onClick={() => handleReady(inv)}
+    className="bg-sky-50 text-sky-700 border border-sky-200 rounded px-2 py-1 hover:bg-sky-100"
+  >
+    جاهزة
+  </button>
+)}
+
     </td>
     
   </tr>

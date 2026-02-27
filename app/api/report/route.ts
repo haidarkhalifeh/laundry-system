@@ -307,6 +307,66 @@ export async function GET(request: NextRequest) {
       .forEach(i => topInvoices.push(i));
   }
 
+  /* ===================== 10) CREATED INVOICES COUNT (NOT CANCELLED) ===================== */
+
+const createdInvoicesCount = await prisma.invoice.count({
+  where: {
+    createdAt: {
+      gte: from,
+      lt: to,
+    },
+    status: {
+      not: InvoiceStatus.CANCELED,
+    },
+  },
+});
+
+/* ===================== 10B) CREATED INVOICES TOTAL ===================== */
+
+const createdInvoicesAggregate = await prisma.invoice.aggregate({
+  where: {
+    createdAt: {
+      gte: from,
+      lt: to,
+    },
+    status: {
+      not: InvoiceStatus.CANCELED,
+    },
+  },
+  _sum: {
+    total: true,
+  },
+});
+
+const createdInvoicesTotal =
+  createdInvoicesAggregate._sum.total ?? 0;
+
+  /* ===================== TOTAL INVOICES IN store not paid  ===================== */
+
+  const notPaidInvoicesCount = await prisma.invoice.count({
+    where: {
+      status: {
+        in: [InvoiceStatus.READY, InvoiceStatus.OPEN],
+      },
+
+    },
+  });
+  
+
+  const notPaidInvoicesAggregate = await prisma.invoice.aggregate({
+    where: {
+      status: {
+        in: [InvoiceStatus.READY, InvoiceStatus.OPEN],
+      },
+      },
+    _sum: {
+      total: true,
+    },
+  });
+  
+  const notPaidInvoicesTotal =
+    notPaidInvoicesAggregate._sum.total ?? 0;
+
   /* ===================== FINAL ===================== */
 
   return NextResponse.json({
@@ -321,5 +381,10 @@ export async function GET(request: NextRequest) {
     topCustomers,
     invoicesList,
     topInvoices,
+    createdInvoicesCount,
+    createdInvoicesTotal,
+    notPaidInvoicesCount,
+    notPaidInvoicesTotal,
   });
 }
+

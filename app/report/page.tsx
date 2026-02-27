@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from 'react';
 
+
 const USD_RATE = 90000;
 type TopItem = {
   itemId: number;
@@ -47,6 +48,10 @@ type ReportResponse = {
   topCustomers?: TopCustomer[];
   invoicesList?: InvoiceListItem[];
   topInvoices?: TopInvoiceItem[];
+  createdInvoicesCount: number;
+  createdInvoicesTotal: number;
+  notPaidInvoicesCount: number;
+  notPaidInvoicesTotal: number;
 };
 
 const todayStr = new Date().toISOString().slice(0, 10);
@@ -86,6 +91,12 @@ function lastDayOfMonth(date = new Date()) {
 }
 
 export default function ReportPage() {
+ 
+
+  const [unlocked, setUnlocked] = useState(false);
+  const [codeInput, setCodeInput] = useState('');
+  const REPORT_CODE = 'mukhtar2009'; // change to anything you want
+
   const [from, setFrom] = useState<string>(todayStr);
   const [to, setTo] = useState<string>(todayStr);
 
@@ -189,6 +200,37 @@ export default function ReportPage() {
   const expenses = report?.expenseTotal ?? 0;
   const net = report?.netTotal ?? 0;
 
+  if (!unlocked) {
+    return (
+      <div dir="rtl" className="min-h-screen flex items-center justify-center bg-[#122035]">
+        <div className="bg-white p-8 rounded-xl shadow w-full max-w-sm text-center">
+          <h1 className="text-2xl font-bold mb-4">تقرير المصبغة 🔒</h1>
+          <p className="text-gray-500 mb-4">أدخل رمز الدخول</p>
+  
+          <input
+            type="password"
+            value={codeInput}
+            onChange={(e) => setCodeInput(e.target.value)}
+            placeholder="رمز الدخول"
+            className="w-full border rounded-md px-4 py-2 mb-4 text-center text-lg"
+          />
+  
+          <button
+            onClick={() => {
+              if (codeInput === REPORT_CODE) {
+                setUnlocked(true);
+              } else {
+                alert('رمز غير صحيح');
+              }
+            }}
+            className="w-full bg-emerald-600 text-white py-2 rounded-md font-bold"
+          >
+            دخول
+          </button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div dir="rtl" className="bg-[#122035] min-h-screen print:min-h-auto px-4 py-6">
       <div className="mx-auto max-w-6xl space-y-6">
@@ -414,6 +456,55 @@ export default function ReportPage() {
         </section>
 
         {/* Summary */}
+        {/* Created Invoices Total */}
+  <div className="rounded-lg bg-white p-6 shadow-sm print:border print:shadow-none">
+    <div className="text-sm font-semibold uppercase text-slate-500">
+      إجمالي الفواتير المُنشأة
+    </div>
+    <div className="mt-3 text-3xl font-extrabold text-slate-900">
+      {(report?.createdInvoicesTotal ?? 0).toLocaleString('en-LB', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      })} ل.ل
+    </div>
+    <div className="text-xl text-black-500 font-bold">
+      ≈{' '}
+      {((report?.createdInvoicesTotal ?? 0) / USD_RATE).toLocaleString('en-LB', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}{' '}
+      $
+    </div>
+    <div className="mt-2 text-sm text-slate-500">
+      {report?.createdInvoicesCount ?? 0} فاتورة تم إنشاؤها خلال الفترة
+      </div>
+  </div>
+
+          {/* not paid invoices total*/}
+          <div className="rounded-lg bg-white p-6 shadow-sm print:border print:shadow-none">
+    <div className="text-sm font-semibold uppercase text-slate-500">
+      إجمالي الفواتير الموجودة
+    </div>
+    <div className="mt-3 text-3xl font-extrabold text-slate-900">
+      {(report?.notPaidInvoicesTotal ?? 0).toLocaleString('en-LB', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      })} ل.ل
+    </div>
+    <div className="text-xl text-black-500 font-bold">
+      ≈{' '}
+      {((report?.notPaidInvoicesTotal ?? 0) / USD_RATE).toLocaleString('en-LB', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}{' '}
+      $
+    </div>
+    <div className="mt-2 text-sm text-slate-500">
+      {report?.notPaidInvoicesCount ?? 0} فاتورة تم إنشاؤها خلال الفترة
+      </div>
+  </div>
+
+  
         <section className="grid gap-4 grid-cols-1">
           <div className="rounded-lg bg-white p-6 shadow-sm print:border print:shadow-none">
             <div className="text-sm font-semibold uppercase text-slate-500">إجمالي الفواتير المدفوعة</div>

@@ -214,19 +214,96 @@ export async function PUT(request: NextRequest) {
 
   // --- handle status update ---
   if (body.status) {
-    if (existing.status === 'PAID' || existing.status === 'CANCELED')
+    if (existing.status === 'CANCELED')
       return NextResponse.json({ error: `Cannot change status of ${existing.status} invoice` }, { status: 400 });
 
     if (body.status === 'CANCELED' && existing.status !== 'OPEN')
       return NextResponse.json({ error: 'Only OPEN invoices can be canceled' }, { status: 400 });
 
-    data.status = body.status;
+    if (body.status === 'READY') {
+      try {
+        const invoice = await prisma.invoice.findUnique({
+          where: { id: existing.id },
+          include: {
+            items: {
+              include: {
+                item: true,
+                serviceType: true,
+              },
+            },
+            customer: true,
+          },
+        });
+    
+        if (!invoice?.customer?.phone) return;
+    
+        const phoneNumber = `961${invoice.customer.phone.replace(/^0/, '')}`;
+    
+        // Convert number to Arabic numerals
+        const toArabicNumeral = (num: number) => {
+          const arabicNums = ['٠','١','٢','٣','٤','٥','٦','٧','٨','٩'];
+          return num.toString().split('').map(d => arabicNums[+d] || d).join('');
+        };
+    
+        // Format items
+        const itemsText = invoice.items.map(i => {
+          const quantity = toArabicNumeral(i.quantity);
+          const itemName = i.item.name;
+          const serviceName = i.serviceType.name;
+          return `- ${quantity} ${itemName} (${serviceName})`;
+        }).join('\n');
+    
+        // Format total with commas and L.L
+        const formatLBP = (num: number) => num.toLocaleString('en-US') + ' L.L';
+        const totalUSD = (invoice.total / 90000).toFixed(2);
+    
+        const messageBody = `مرحباً ${invoice.customer.name || ''} 👋
+  طلبكم أصبح جاهزاً للاستلام من مصبغة المختار 🧺
+  
+  📄 تفاصيل الطلب:
+  ${itemsText}
+  
+  💰 المجموع: ${formatLBP(invoice.total)}
+  ~${totalUSD}$
+  
+  —
+  هذا الرقم مخصص للإشعارات والعروض فقط
+  💾 يرجى حفظ الرقم لتصلك طلباتك والعروض
+  📞 لخدمة الزبائن:81679891` ;
+    
+        console.log('📱 Sending READY WhatsApp to:', phoneNumber);
+    
+        await fetch('https://gate.whapi.cloud/messages/text', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.WHAPI_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            to: phoneNumber,
+            body: messageBody,
+          }),
+        });
+    
+        console.log('✅ WhatsApp READY message sent');
+    
+      } catch (error) {
+        console.error('❌ Whapi Send Error:', error);
+      }
+    }
+
+    if (!(existing.status === 'PAID' && body.status === 'READY')) {
+      data.status = body.status;
+    }
     if (body.status === 'PAID') {
       data.paidAt = body.paidAt
         ? new Date(body.paidAt)
         : new Date();
     }
   }
+
+  
+
 
   // --- handle adjustedAmount ---
   if (typeof body.adjustedAmount === 'number') {
