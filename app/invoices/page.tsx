@@ -6,7 +6,8 @@ import Barcode from 'react-barcode';
 import { useRef} from 'react';
 
 
-
+const branch =process.env.NEXT_PUBLIC_BRANCH;
+const logoSrc = `/${branch}.png`;
 const frequentItemIds = [6, 7, 8, 1]; // IDs of the 30% most-used items
 const otherItemIds = [2,32,25, 3 ,4 ,5 ,27,28, 9, 10, 11,38, 13, 14, 15, 16,29,37,18,21,33,34,19,36,26,30,31,20,22,35,40,23,24,12, 17]; // remaining IDs in your desired order
 const USD_RATE = 90000; // 1 USD = 90,000 LBP
@@ -1630,7 +1631,7 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
       {/* Header */}
       <img 
   style={{ width: '100%', height: 'auto' }}
-  src="/logo.png"
+  src={logoSrc}
   alt="Laundry Logo"
   className="mx-auto mb-2 h-12 print:h-14"
 />

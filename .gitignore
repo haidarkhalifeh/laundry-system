@@ -43,3 +43,11 @@ next-env.d.ts
 /app/generated/prisma
 
 /app/generated/prisma
+
+
+
+# Database (VERY IMPORTANT)
+*.db
+*.sqlite
+prisma/dev.db
+dev.db

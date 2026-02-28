@@ -50,24 +50,24 @@ if (startParam || endParam) {
   };
 
   if (statusParam === 'PAID') {
-    // ONLY paidAt
-    where.paidAt = paidRange;
-  } else if (statusParam === 'OPEN' || statusParam === 'CANCELED' || statusParam === 'READY') {
-    // ONLY createdAt
-    where.createdAt = createdRange;
-  } else {
-    // ALL statuses → split logic safely
-    where.OR = [
-      {
-        status: { in: ['OPEN', 'CANCELED', 'READY'] },
-        createdAt: createdRange,
-      },
-      {
-        status: 'PAID',
-        paidAt: paidRange,
-      },
-    ];
-  }
+  // ONLY paidAt
+  where.paidAt = paidRange;
+} else if (statusParam === 'OPEN' || statusParam === 'CANCELED' || statusParam === 'READY') {
+  // ONLY createdAt
+  where.createdAt = createdRange;
+} else {
+  // ALL statuses → split logic safely
+  where.OR = [
+    {
+      status: { in: ['OPEN', 'CANCELED', 'READY'] },
+      createdAt: createdRange,
+    },
+    {
+      status: 'PAID',
+      paidAt: paidRange,
+    },
+  ];
+}
 }
 
   // ---------- SEARCH ----------
@@ -269,7 +269,7 @@ export async function PUT(request: NextRequest) {
   —
   هذا الرقم مخصص للإشعارات والعروض فقط
   💾 يرجى حفظ الرقم لتصلك طلباتك والعروض
-  📞 لخدمة الزبائن:81679891` ;
+  📞 لخدمة الزبائن:${process.env.NUMBER}` ;
     
         console.log('📱 Sending READY WhatsApp to:', phoneNumber);
     
