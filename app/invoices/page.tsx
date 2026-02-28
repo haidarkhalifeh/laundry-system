@@ -1360,6 +1360,7 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
       >
         <option value="ALL">الكل</option>
         <option value="OPEN">غير مدفوعة</option>
+        <option value="READY">جاهزة</option>
         <option value="PAID">مدفوعة</option>
         <option value="CANCELED">ملغاة</option>
       </select>
@@ -1585,15 +1586,6 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   </button>
 )}
 
-{(inv.status === 'OPEN' || inv.status === 'PAID') && (
-  <button
-    type="button"
-    onClick={() => handleReady(inv)}
-    className="bg-sky-50 text-sky-700 border border-sky-200 rounded px-2 py-1 hover:bg-sky-100"
-  >
-    جاهزة
-  </button>
-)}
 
     </td>
     
