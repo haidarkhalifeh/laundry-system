@@ -5,6 +5,9 @@ import { useEffect, useState } from 'react';
 
 
 const USD_RATE = 90000;
+const BRANCH = process.env.NEXT_PUBLIC_BRANCH;
+const isKfarhazir = BRANCH === 'kfarhazir';
+
 type TopItem = {
   itemId: number;
   itemName: string;
@@ -52,7 +55,10 @@ type ReportResponse = {
   createdInvoicesTotal: number;
   notPaidInvoicesCount: number;
   notPaidInvoicesTotal: number;
+  withdrawTotal?: number;
 };
+
+
 
 const todayStr = new Date().toISOString().slice(0, 10);
 function formatDateArabic(dateStr: string) {
@@ -93,6 +99,7 @@ function lastDayOfMonth(date = new Date()) {
 export default function ReportPage() {
  
 
+  
   const [unlocked, setUnlocked] = useState(false);
   const [codeInput, setCodeInput] = useState('');
   const REPORT_CODE = 'mukhtar2009'; // change to anything you want
@@ -199,6 +206,7 @@ export default function ReportPage() {
   const revenue = report?.revenueTotal ?? 0;
   const expenses = report?.expenseTotal ?? 0;
   const net = report?.netTotal ?? 0;
+  const withdraw = report?.withdrawTotal ?? 0;
 
   if (!unlocked) {
     return (
@@ -546,6 +554,8 @@ export default function ReportPage() {
             <div className="mt-2 text-sm text-slate-500">{report?.expenseCount ?? 0} مصروف</div>
           </div>
 
+{/* Withdraw Section (Only for Kfarhazir) */}
+
           <div className="rounded-lg bg-white p-6 shadow-sm print:border print:shadow-none">
             <div className="text-sm font-semibold uppercase text-slate-500">الصافي (إيراد - مصروف)</div>
             <div className={'mt-3 text-3xl font-extrabold ' + (net >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
@@ -568,6 +578,62 @@ export default function ReportPage() {
               <div>{formatDateArabic(report?.to || to)}</div>
             </div>
           </div>
+
+          {isKfarhazir && withdraw > 0 && (
+  <div className="rounded-lg bg-amber-50 p-6 shadow-sm border border-amber-300 print:border print:shadow-none">
+    <div className="text-sm font-semibold uppercase text-amber-700">
+      السحب من الصندوق
+    </div>
+
+    <div className="mt-3 text-3xl font-extrabold text-rose-700">
+      <div>
+        {withdraw.toLocaleString('en-LB', {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0,
+        })} ل.ل
+      </div>
+
+      <div className="text-2xl text-black-500 font-bold">
+        ≈{' '}
+        {(withdraw / USD_RATE).toLocaleString('en-LB', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}{' '}
+        $
+      </div>
+    </div>
+
+    <div className="mt-2 text-sm text-slate-500">
+      هذا المبلغ لا يُحتسب كمصروف تشغيلي
+    </div>
+  </div>
+)}
+          {isKfarhazir && withdraw > 0 && (
+  <div className="rounded-lg bg-amber-50 p-6 shadow-sm border border-amber-300 print:border print:shadow-none">
+    <div className="text-sm font-semibold uppercase text-amber-700">
+    الجارور الفعلي
+    </div>
+
+    <div className="mt-3 text-3xl font-extrabold text-rose-700">
+      <div>
+        {(net - withdraw).toLocaleString('en-LB', {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0,
+        })} ل.ل
+      </div>
+
+      <div className="text-2xl text-black-500 font-bold">
+        ≈{' '}
+        {((net - withdraw) / USD_RATE).toLocaleString('en-LB', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}{' '}
+        $
+      </div>
+    </div>
+
+  </div>
+)}
         </section>
 
         {/* Top Items */}

@@ -23,12 +23,16 @@ const EXPENSE_CATEGORIES = [
 
 
 
+const branch = process.env.NEXT_PUBLIC_BRANCH;
+
+
 const QUICK_TYPES = [
   'دواء غسيل',
   'تعاليق',
   'مياه خزان',
   'نيلون حرامات',
   'تراوزر غارد',
+  ...(branch === 'kfarhazir' ? ['سحب'] : [])
 ];
 function getCategoryLabel(value: string) {
   return EXPENSE_CATEGORIES.find((c) => c.value === value)?.label ?? 'أخرى';
@@ -82,6 +86,9 @@ const [categoryFilter, setCategoryFilter] = useState('ALL');
     if (categoryFilter !== 'ALL') {
       params.set('category', categoryFilter);
     }
+
+ 
+
 
     const res = await fetch(`/api/expenses?${params.toString()}`, {
       cache: 'no-store',
@@ -244,7 +251,18 @@ const [categoryFilter, setCategoryFilter] = useState('ALL');
     setFormCategory(exp.category ?? 'OTHER');
   }
 
-  const total = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const realExpensesTotal = expenses
+  .filter(e => e.type !== 'سحب')
+  .reduce((sum, e) => sum + e.amount, 0);
+
+const withdrawalTotal = expenses
+  .filter(e => e.type === 'سحب')
+  .reduce((sum, e) => sum + e.amount, 0);
+
+const normalTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
+
+const displayedTotal =
+  branch === 'kfarhazir' ? realExpensesTotal : normalTotal;
 
   return (
     <div dir="rtl" className="bg-[#122035] min-h-screen px-4 py-6">
@@ -484,25 +502,52 @@ const [categoryFilter, setCategoryFilter] = useState('ALL');
   </div>
 </section>
 
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-3xl text-black-900">قائمة المصاريف</h2>
-            <div><span className="text-black-500">{expenses.length.toLocaleString('ar-LB')} مصاريف</span>
-            <div className="text-2xl font-bold text-emerald-900">
-      {total.toLocaleString('en-LB', {
+<div className="mb-3 flex items-center justify-between">
+  <h2 className="text-3xl text-black-900">قائمة المصاريف</h2>
+
+  <div>
+    <span className="text-black-500">
+      {expenses.length.toLocaleString('ar-LB')} مصاريف
+    </span>
+
+    {/* Real Expenses Total */}
+    <div className="text-2xl font-bold text-emerald-900">
+      {displayedTotal.toLocaleString('en-LB', {
         minimumFractionDigits: 0,
         maximumFractionDigits: 0,
       })}{' '}
       ليرة
     </div>
+
     <div className="text-xl text-emerald-700">
-      {(total / USD_RATE).toLocaleString('en-LB', {
+      {(displayedTotal / USD_RATE).toLocaleString('en-LB', {
         minimumFractionDigits: 0,
         maximumFractionDigits: 0,
       })}{' '}
       $ تقريبًا
     </div>
-            </div>
-          </div>
+
+    {/* Withdrawal Total (Only for kfarhazir) */}
+    {branch === 'kfarhazir' && withdrawalTotal > 0 && (
+      <div><div className="text-lg text-red-700 mt-2">
+        مجموع السحب:{' '}
+        {withdrawalTotal.toLocaleString('en-LB', {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0,
+        })}{' '}
+        ليرة
+      </div>
+      <div className="text-lg text-red-700 mt-2">
+      {(withdrawalTotal / USD_RATE).toLocaleString('en-LB', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      })}{' '}
+      $ تقريبًا
+    </div>
+    </div>
+    )}
+  </div>
+</div>
 
           {expenses.length === 0 ? (
             <p className="text-black-500">لم يتم العثور على مصروف لهذا الاسم.</p>

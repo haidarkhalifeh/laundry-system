@@ -25,6 +25,7 @@ enum ExpenseCategory {
   DELIVERY       // Fuel, vehicle maintenance, transport/logistics
   MARKETING      // Ads, flyers, promotions, online/offline campaigns
   OTHER          // Miscellaneous or irregular expenses
+  
 }
 
 // ---------- MODELS ----------

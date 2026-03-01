@@ -174,8 +174,17 @@ export async function GET(request: NextRequest) {
 
   /* ===================== 5) EXPENSE TOTAL ===================== */
 
-  const expenseTotal = expenses.reduce((s, e) => s + e.amount, 0);
-  const expenseCount = expenses.length;
+  // Separate withdraw (سحب) from real expenses
+const withdrawTotal = expenses
+.filter((e) => e.type === 'سحب')
+.reduce((s, e) => s + e.amount, 0);
+
+const realExpenseTotal = expenses
+.filter((e) => e.type !== 'سحب')
+.reduce((s, e) => s + e.amount, 0);
+
+const expenseTotal = realExpenseTotal; // now excludes سحب
+const expenseCount = expenses.filter((e) => e.type !== 'سحب').length;
 
   /* ===================== 6) TOP ITEMS ===================== */
 
@@ -378,6 +387,7 @@ const createdInvoicesTotal =
     expenseCount,
     netTotal: revenueTotal - expenseTotal,
     topItems,
+    withdrawTotal,
     topCustomers,
     invoicesList,
     topInvoices,
