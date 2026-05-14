@@ -28,7 +28,7 @@ function delay(ms) {
 async function sendCampaign() {
   const customers = [];
 
-  const csvFilePath = path.join(__dirname, "customers.csv"); // CSV in marketing folder                  // Node-fetch local file URL
+  const csvFilePath = path.join(__dirname, "teset.csv"); // CSV in marketing folder                  // Node-fetch local file URL
 
   // Load CSV
   fs.createReadStream(csvFilePath)
@@ -40,16 +40,15 @@ async function sendCampaign() {
       console.log(`📤 Sending to ${customers.length} customers`);
 
       for (const customer of customers) {
-        const phoneNumber = customer.phone;
+        const phoneNumber = customer.phone.replace(/^\+/, ""); ;
 
         // Build WhatsApp message payload
         const payload = {
           to: phoneNumber,
-          media: `https://raw.githubusercontent.com/haidarkhalifeh/laundry-assets/refs/heads/main/offer.jpg`,
-          caption: `مرحباً ${customer.name || ''} 👋
-
-        عرض خاص من مصبغة المختار🧺
-`,
+          media: `https://raw.githubusercontent.com/haidarkhalifeh/laundry-assets/refs/heads/main/مصبغة%20المختار%20معكن%20ليرجع%20البيت%20يعمر%20بصحابه%20🏠.png`,
+          caption: `الحمدالله عالسلامة ${customer.name || ''}🙏🏻
+المختار رجع كمان وجاهز لخدمتك💙
+تواصل معنا: 81679891`,
         };
 
         try {
