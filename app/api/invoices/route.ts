@@ -3,7 +3,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import type { Prisma } from '@/app/generated/prisma/client';
 
-type InvoiceStatus = 'OPEN' | 'READY' | 'PAID' | 'CANCELED';
+type InvoiceStatus =
+  | 'OPEN'
+  | 'READY'
+  | 'PICKED_UP'
+  | 'CANCELED';
+
+type PaymentStatus = 'UNPAID' | 'PAID';
 
 // helper to generate a ticket number like "INV-2025-000001"
 function generateTicketNumber(createdAt: Date, sequence: number): string {
@@ -17,6 +23,7 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
 
   const statusParam = searchParams.get('status');
+  const paymentStatusParam = searchParams.get('paymentStatus');
   const search = searchParams.get('search') ?? undefined;
   const ticketNumber = searchParams.get('ticketNumber') ?? undefined;
   const startParam = searchParams.get('start');
@@ -28,13 +35,24 @@ export async function GET(request: NextRequest) {
   if (
     statusParam === 'OPEN' ||
     statusParam === 'READY' ||
-    statusParam === 'PAID' ||
+    statusParam === 'PICKED_UP' ||
     statusParam === 'CANCELED'
   ) {
     where.status = statusParam as InvoiceStatus;
   }
 
+  if (
+
+    paymentStatusParam === 'PAID' ||
+    paymentStatusParam === 'UNPAID'
+  
+  ) {
+  
+    where.paymentStatus = paymentStatusParam as PaymentStatus;
+  }
+
   // ---------- DATE RANGE (CREATED OR PAID) ----------
+// ---------- DATE RANGE ----------
 if (startParam || endParam) {
   const start = startParam ? new Date(startParam) : undefined;
   const end = endParam ? new Date(endParam + 'T23:59:59.999') : undefined;
@@ -49,25 +67,13 @@ if (startParam || endParam) {
     ...(end && !isNaN(end.getTime()) && { lte: end }),
   };
 
-  if (statusParam === 'PAID') {
-  // ONLY paidAt
-  where.paidAt = paidRange;
-} else if (statusParam === 'OPEN' || statusParam === 'CANCELED' || statusParam === 'READY') {
-  // ONLY createdAt
-  where.createdAt = createdRange;
-} else {
-  // ALL statuses → split logic safely
-  where.OR = [
-    {
-      status: { in: ['OPEN', 'CANCELED', 'READY'] },
-      createdAt: createdRange,
-    },
-    {
-      status: 'PAID',
-      paidAt: paidRange,
-    },
-  ];
-}
+  if (paymentStatusParam === 'PAID') {
+    // ONLY paid invoices → filter by paid date
+    where.paidAt = paidRange;
+  } else {
+    // Everything else → filter by creation date
+    where.createdAt = createdRange;
+  }
 }
 
   // ---------- SEARCH ----------
@@ -197,6 +203,7 @@ export async function PUT(request: NextRequest) {
     id?: number;
     ticketNumber?: string;
     status?: InvoiceStatus;
+    paymentStatus?: PaymentStatus;
     adjustedAmount?: number;
     paidAt?: string;
     items?: { itemId?: number; serviceTypeId?: number; quantity?: number; adjustedAmount?: number }[];
@@ -212,6 +219,18 @@ export async function PUT(request: NextRequest) {
 
   const data: Prisma.InvoiceUpdateInput = {};
 
+  if (body.paymentStatus) {
+    data.paymentStatus = body.paymentStatus;
+  
+    if (body.paymentStatus === 'PAID') {
+      data.paidAt = body.paidAt
+        ? new Date(body.paidAt)
+        : new Date();
+    } else {
+      data.paidAt = null;
+    }
+  }
+
   // --- handle status update ---
   if (body.status) {
     if (existing.status === 'CANCELED')
@@ -220,85 +239,83 @@ export async function PUT(request: NextRequest) {
     if (body.status === 'CANCELED' && existing.status !== 'OPEN')
       return NextResponse.json({ error: 'Only OPEN invoices can be canceled' }, { status: 400 });
 
-    if (body.status === 'READY') {
-      try {
-        const invoice = await prisma.invoice.findUnique({
-          where: { id: existing.id },
-          include: {
-            items: {
-              include: {
-                item: true,
-                serviceType: true,
-              },
-            },
-            customer: true,
-          },
-        });
+  //   if (body.status === 'READY') {
+  //     try {
+  //       const invoice = await prisma.invoice.findUnique({
+  //         where: { id: existing.id },
+  //         include: {
+  //           items: {
+  //             include: {
+  //               item: true,
+  //               serviceType: true,
+  //             },
+  //           },
+  //           customer: true,
+  //         },
+  //       });
     
-        if (!invoice?.customer?.phone) return;
+  //       if (!invoice?.customer?.phone) return;
     
-        const phoneNumber = `961${invoice.customer.phone.replace(/^0/, '')}`;
+  //       const phoneNumber = `961${invoice.customer.phone.replace(/^0/, '')}`;
     
-        // Convert number to Arabic numerals
-        const toArabicNumeral = (num: number) => {
-          const arabicNums = ['٠','١','٢','٣','٤','٥','٦','٧','٨','٩'];
-          return num.toString().split('').map(d => arabicNums[+d] || d).join('');
-        };
+  //       // Convert number to Arabic numerals
+  //       const toArabicNumeral = (num: number) => {
+  //         const arabicNums = ['٠','١','٢','٣','٤','٥','٦','٧','٨','٩'];
+  //         return num.toString().split('').map(d => arabicNums[+d] || d).join('');
+  //       };
     
-        // Format items
-        const itemsText = invoice.items.map(i => {
-          const quantity = toArabicNumeral(i.quantity);
-          const itemName = i.item.name;
-          const serviceName = i.serviceType.name;
-          return `- ${quantity} ${itemName} (${serviceName})`;
-        }).join('\n');
+  //       // Format items
+  //       const itemsText = invoice.items.map(i => {
+  //         const quantity = toArabicNumeral(i.quantity);
+  //         const itemName = i.item.name;
+  //         const serviceName = i.serviceType.name;
+  //         return `- ${quantity} ${itemName} (${serviceName})`;
+  //       }).join('\n');
     
-        // Format total with commas and L.L
-        const formatLBP = (num: number) => num.toLocaleString('en-US') + ' L.L';
-        const totalUSD = (invoice.total / 90000).toFixed(2);
+  //       // Format total with commas and L.L
+  //       const formatLBP = (num: number) => num.toLocaleString('en-US') + ' L.L';
+  //       const totalUSD = (invoice.total / 90000).toFixed(2);
     
-        const messageBody = `مرحباً ${invoice.customer.name || ''} 👋
-  طلبكم أصبح جاهزاً للاستلام من مصبغة المختار 🧺
+  //       const messageBody = `مرحباً ${invoice.customer.name || ''} 👋
+  // طلبكم أصبح جاهزاً للاستلام من مصبغة المختار 🧺
   
-  📄 تفاصيل الطلب:
-  ${itemsText}
+  // 📄 تفاصيل الطلب:
+  // ${itemsText}
   
-  💰 المجموع: ${formatLBP(invoice.total)}
-  ~${totalUSD}$
+  // 💰 المجموع: ${formatLBP(invoice.total)}
+  // ~${totalUSD}$
   
-  —
-  هذا الرقم مخصص للإشعارات والعروض فقط
-  💾 يرجى حفظ الرقم لتصلك طلباتك والعروض
-  📞 لخدمة الزبائن:${process.env.NUMBER}` ;
+  // —
+  // هذا الرقم مخصص للإشعارات والعروض فقط
+  // 💾 يرجى حفظ الرقم لتصلك طلباتك والعروض
+  // 📞 لخدمة الزبائن:${process.env.NUMBER}` ;
     
-        console.log('📱 Sending READY WhatsApp to:', phoneNumber);
+  //       console.log('📱 Sending READY WhatsApp to:', phoneNumber);
     
-        await fetch('https://gate.whapi.cloud/messages/text', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${process.env.WHAPI_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            to: phoneNumber,
-            body: messageBody,
-          }),
-        });
+  //       await fetch('https://gate.whapi.cloud/messages/text', {
+  //         method: 'POST',
+  //         headers: {
+  //           'Authorization': `Bearer ${process.env.WHAPI_API_KEY}`,
+  //           'Content-Type': 'application/json',
+  //         },
+  //         body: JSON.stringify({
+  //           to: phoneNumber,
+  //           body: messageBody,
+  //         }),
+  //       });
     
-        console.log('✅ WhatsApp READY message sent');
+  //       console.log('✅ WhatsApp READY message sent');
     
-      } catch (error) {
-        console.error('❌ Whapi Send Error:', error);
-      }
-    }
+  //     } catch (error) {
+  //       console.error('❌ Whapi Send Error:', error);
+  //     }
+  //   }
 
-    if (!(existing.status === 'PAID' && body.status === 'READY')) {
-      data.status = body.status;
-    }
-    if (body.status === 'PAID') {
-      data.paidAt = body.paidAt
-        ? new Date(body.paidAt)
-        : new Date();
+    data.status = body.status;
+
+    if (body.status === 'PICKED_UP') {
+      data.pickedUpAt = new Date();
+    
     }
   }
 

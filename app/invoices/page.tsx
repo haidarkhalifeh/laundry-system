@@ -44,15 +44,22 @@ type InvoiceItemRow = {
 type Invoice = {
   id: number;
   ticketNumber: string;
-  status: 'OPEN' | 'READY' | 'PAID' | 'CANCELED';
+
+  status: 'OPEN' | 'READY' | 'PICKED_UP' | 'CANCELED';
+  paymentStatus: 'UNPAID' | 'PAID';
+
   createdAt: string;
+  paidAt: string | null;
+  pickedUpAt: string | null;
+
   subtotal: number;
   adjustedAmount: number;
   total: number;
+
   notes: string | null;
+
   customer: Customer;
   items: InvoiceItemRow[];
-  paidAt: string | null;
 };
 
 // Extend Invoice locally with a temporary flag
@@ -168,7 +175,8 @@ useEffect(() => {
   // list / filters
   const [invoices, setInvoices] = useState<InvoiceWithFlag[]>([]);
   const [listLoading, setListLoading] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'OPEN' | 'READY' | 'PAID'>('OPEN');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'OPEN' | 'READY' | 'PICKED_UP'>('OPEN');
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState< 'ALL' | 'UNPAID' | 'PAID'>('ALL');
   const [daysFilter, setDaysFilter] = useState('7');
   const [searchFilter, setSearchFilter] = useState('');
 
@@ -216,7 +224,7 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   async function loadInvoices(
     customStart?: string,
     customEnd?: string,
-    overrides?: { status?: typeof statusFilter; days?: string; search?: string }
+    overrides?: { status?: typeof statusFilter; paymentStatus?: typeof paymentStatusFilter; days?: string; search?: string }
   ): Promise<void> {
     setListLoading(true);
   
@@ -233,6 +241,9 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
     const status = overrides?.status ?? statusFilter;
     if (status && status !== 'ALL') params.set('status', status);
+
+    const paymentStatus = overrides?.paymentStatus ?? paymentStatusFilter;
+    if (paymentStatus !== 'ALL') {params.set('paymentStatus', paymentStatus);}
   
     if (activeStart && activeEnd) {
       params.set('start', `${activeStart}T00:00:00`);
@@ -272,13 +283,14 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const t = setTimeout(() => {
       loadInvoices(undefined, undefined, {
         status: statusFilter,
+        paymentStatus: paymentStatusFilter,
         days: daysFilter,
         search: searchFilter,
       });
     }, 400); // debounce delay (ms)
   
     return () => clearTimeout(t);
-  }, [searchFilter, statusFilter, daysFilter]);
+  }, [searchFilter, statusFilter, paymentStatusFilter, daysFilter]);
 
   useEffect(() => {
     const handleAfterPrint = () => {
@@ -529,12 +541,12 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // ---- status updates / payment ----
   async function updateInvoiceStatus(
     invoiceId: number,
-    status: 'OPEN' | 'READY' | 'PAID' | 'CANCELED',
+    status: 'OPEN' | 'READY' | 'PICKED_UP' | 'CANCELED',
     adjustedAmountLb: number | null = null,
   ) {
     const payload: {
       id: number;
-      status: 'OPEN' | 'READY' | 'PAID' | 'CANCELED';
+      status: 'OPEN' | 'READY' | 'PICKED_UP' | 'CANCELED';
       adjustedAmount?: number;
     } = {
       id: invoiceId,
@@ -577,7 +589,7 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ticketNumber: ticket,
-        status: 'PAID',
+        paymentStatus: 'PAID',
         adjustedAmount: adjLb,
         paidAt: new Date().toISOString(), // ✅ ADD THIS
       }),
@@ -622,7 +634,33 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     }
   };
 
-
+  const handlePicked_up = async (inv: InvoiceWithFlag) => {
+    try {
+      const res = await fetch('/api/invoices', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: inv.id,
+          status: 'PICKED_UP', // backend handles whether it actually updates DB
+        }),
+      });
+  
+      if (!res.ok) {
+        alert('فشل إرسال الإشعار أو تحديث الحالة');
+        return;
+      }
+  
+      // Mark as sent in UI
+      setInvoices((prev) =>
+        prev.map((i) =>
+          i.id === inv.id ? { ...i, readySent: true } : i
+        )
+      );
+    } catch (error) {
+      console.error('Ready update/send error:', error);
+      alert('حدث خطأ أثناء إرسال الإشعار');
+    }
+  };
   // ---- printing ----
   function handleView(inv: Invoice) {
     
@@ -661,7 +699,7 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const sortedInvoices = [...invoices].sort((a, b) => {
     // If both are PAID → sort by paidAt
-    if (a.status === 'PAID' && b.status === 'PAID') {
+    if (a.paymentStatus === 'PAID' && b.paymentStatus === 'PAID') {
       return (
         new Date(b.paidAt ?? 0).getTime() -
         new Date(a.paidAt ?? 0).getTime()
@@ -669,8 +707,8 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     }
   
     // If one is PAID and the other is not → PAID first (optional)
-    if (a.status === 'PAID' && b.status !== 'PAID') return -1;
-    if (a.status !== 'PAID' && b.status === 'PAID') return 1;
+    if (a.paymentStatus === 'PAID' && b.paymentStatus !== 'PAID') return -1;
+    if (a.paymentStatus !== 'PAID' && b.paymentStatus === 'PAID') return 1;
   
     // Otherwise → sort by createdAt
     return (
@@ -1360,14 +1398,43 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
         className="rounded-md border border-slate-300 px-3 py-1 text-xl font-semibold focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
       >
         <option value="ALL">الكل</option>
-        <option value="OPEN">غير مدفوعة</option>
+        <option value="OPEN">موجودة</option>
         <option value="READY">جاهزة</option>
-        <option value="PAID">مدفوعة</option>
+        <option value="PICKED_UP">مستلمة</option>
         <option value="CANCELED">ملغاة</option>
       </select>
     </div>
 
-   
+
+    <div>
+  <label className="mb-1 block text-base font-semibold text-slate-600">
+    الدفع
+  </label>
+
+  <select
+    value={paymentStatusFilter}
+    onChange={(e) => {
+      const v = e.target.value as typeof paymentStatusFilter;
+      setPaymentStatusFilter(v);
+
+      void loadInvoices(undefined, undefined, {
+        status: statusFilter,
+        paymentStatus: v,
+        days: daysFilter,
+        search: searchFilter,
+      });
+    }}
+    className="rounded-md border border-slate-300 px-3 py-1 text-xl font-semibold focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+  >
+    <option value="ALL">الكل</option>
+    <option value="UNPAID">غير مدفوعة</option>
+    <option value="PAID">مدفوعة</option>
+  </select>
+</div>
+
+
+
+
     {/* Search */}
     <div className="flex-1 min-w-[160px]">
       <label className="mb-1 block text-xl font-semibold text-slate-600">
@@ -1389,11 +1456,12 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
        type="button"
        onClick={() => {
          setStatusFilter('OPEN');
+         setPaymentStatusFilter('ALL');
          setDaysFilter('7');
          setSearchFilter('');
          setStartDate(undefined);
          setEndDate(undefined);
-         void loadInvoices(undefined, undefined, { status: 'OPEN', days: '7', search: '' });
+         void loadInvoices(undefined, undefined, { status: 'OPEN',paymentStatus: 'ALL', days: '7', search: '' });
        }}
       className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xl font-bold text-slate-700 hover:bg-slate-100"
     >
@@ -1471,17 +1539,17 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
             ? 'bg-amber-50 text-amber-700 border border-amber-200'
             : inv.status === 'READY'
             ? 'bg-sky-50 text-sky-700 border border-sky-200'
-            : inv.status === 'PAID'
+            : inv.status === 'PICKED_UP'
             ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
             : 'bg-red-50 text-red-700 border border-red-200' // for CANCELED
         }`}
       >
         {inv.status === 'OPEN'
-          ? 'غير مدفوعة'
+          ? 'موجودة'
           : inv.status === 'READY'
           ? 'جاهزة'
-          : inv.status === 'PAID'
-          ? 'مدفوعة'
+          : inv.status === 'PICKED_UP'
+          ? 'مستلمة'
           : 'ملغاة'}
       </span>
     </td>
@@ -1497,7 +1565,7 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     })}
   </div>
 
-  {inv.status === 'PAID' && inv.paidAt && (
+  {inv.paymentStatus === 'PAID' && inv.paidAt && (
     <div className="mt-1 text-sm font-medium text-emerald-600">
       مدفوعة:
       {' '}
@@ -1543,7 +1611,7 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
 
       {/* Edit button (only if not canceled or paid) */}
-      {inv.status !== 'PAID' && inv.status !== 'CANCELED' && (
+      {inv.paymentStatus !== 'PAID' && inv.status !== 'CANCELED' && (
         <button
           type="button"
           onClick={() => handleEditInvoice(inv)}
@@ -1554,7 +1622,7 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
       )}
 
       {/* Cancel button (only if not paid or already canceled) */}
-      {inv.status !== 'PAID' && inv.status !== 'CANCELED' && (
+      {inv.status !== 'PICKED_UP' && inv.status !== 'CANCELED' && (
         <button
           type="button"
           onClick={async () => {
@@ -1577,7 +1645,7 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
         </button>
       )}
 
-{(inv.status === 'OPEN' || inv.status === 'PAID') && !inv.readySent && (
+{(inv.status === 'OPEN') && !inv.readySent && (
   <button
     type="button"
     onClick={() => handleReady(inv)}
@@ -1587,6 +1655,15 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   </button>
 )}
 
+{(inv.status === 'READY' ) && (
+  <button
+    type="button"
+    onClick={() => handlePicked_up(inv)}
+    className="bg-sky-50 text-sky-700 border border-sky-200 rounded px-2 py-1 hover:bg-sky-100"
+  >
+    مستلمة
+  </button>
+)}
 
     </td>
     
@@ -1723,7 +1800,7 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
             })}{' '}
             $
           </div>
-          {selectedInvoice.status === 'PAID' && (
+          {selectedInvoice.paymentStatus === 'PAID' && (
   <div className="mt-2 inline-block rounded-md px-4 py-1 text-3xl font-bold text-emerald-700 print:text-black">
     واصل
   </div>
