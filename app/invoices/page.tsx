@@ -1577,6 +1577,25 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
         minute: 'numeric',
         weekday: 'long',
       })}
+
+      
+    </div>
+  )}
+
+{inv.status === 'PICKED_UP' && inv.pickedUpAt && (
+    <div className="mt-1 text-sm font-medium text-red-600">
+      مستلمة:
+      {' '}
+      {new Date(inv.pickedUpAt).toLocaleString('ar-LB', {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+        weekday: 'long',
+      })}
+
+      
     </div>
   )}
 </td>
