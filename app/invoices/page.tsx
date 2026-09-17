@@ -194,6 +194,7 @@ const [endDate, setEndDate] = useState<string | undefined>();
 const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
 const formRef = useRef<HTMLDivElement | null>(null);
 const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+const [payTenPercentDiscount, setPayTenPercentDiscount] = useState(false);
   
   type Errors = {
     customer?: string;
@@ -572,35 +573,7 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     await loadInvoices();
   }
 
-  async function applyTenPercentDiscount(inv: Invoice) {
-    const discount = -Math.round((inv.subtotal * 0.10) / 1000) * 1000;
-  
-    const res = await fetch('/api/invoices', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: inv.id,
-        adjustedAmount: discount,
-      }),
-    });
-  
-    if (!res.ok) {
-      const err = await res.json().catch(() => null);
-      alert(err?.error || 'فشل تطبيق الخصم');
-      return;
-    }
-  
-    const updated = (await res.json()) as Invoice;
-  
-    setInvoices((prev) =>
-      prev.map((i) => (i.id === updated.id ? updated : i))
-    );
-  
-    // If this invoice is currently open in the popup, update it too
-    setSelectedInvoice((prev) =>
-      prev?.id === updated.id ? updated : prev
-    );
-  }
+
 
   // mark as paid by ticketNumber (scanner / manual)
   async function handlePayByTicket(e: React.FormEvent) {
@@ -610,9 +583,30 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
     const ticket =
       "INV-" + new Date().getFullYear() + "-" + payTicketNumber.trim();
-    if (!ticket) return;
   
-    const adjLb = normalizeAmountInput(payAdjustedAmount);
+    if (!payTicketNumber.trim()) return;
+  
+    // Find the invoice first so we know its subtotal
+    const invoice = invoices.find(
+      (inv) => inv.ticketNumber === ticket
+    );
+  
+    if (!invoice) {
+      setErrors({ invoice: 'الفاتورة غير موجودة' });
+      return;
+    }
+  
+    // Manual adjustment
+    let adjustment = normalizeAmountInput(payAdjustedAmount);
+  
+    // Add 10% discount if selected
+    if (payTenPercentDiscount) {
+      const discount = -Math.round(
+        (invoice.subtotal * 0.10) / 1000
+      ) * 1000;
+  
+      adjustment += discount;
+    }
   
     const res = await fetch('/api/invoices', {
       method: 'PUT',
@@ -620,19 +614,22 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
       body: JSON.stringify({
         ticketNumber: ticket,
         paymentStatus: 'PAID',
-        adjustedAmount: adjLb,
-        paidAt: new Date().toISOString(), // ✅ ADD THIS
+        adjustedAmount: adjustment,
+        paidAt: new Date().toISOString(),
       }),
     });
   
     if (!res.ok) {
-      setErrors({ invoice: 'الفاتورة غير موجودة' });
+      setErrors({ invoice: 'فشل دفع الفاتورة' });
       return;
     }
   
     setPayTicketNumber('');
     setPayAdjustedAmount('');
+    setPayTenPercentDiscount(false);
+  
     await loadInvoices();
+  
     ticketInputRef.current?.focus();
   }
 
@@ -1317,6 +1314,17 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     >
       −100
     </button>
+    <button
+  type="button"
+  onClick={() => setPayTenPercentDiscount((prev) => !prev)}
+  className={`h-7 px-2 flex items-center justify-center rounded-md border text-sm font-bold transition ${
+    payTenPercentDiscount
+      ? 'bg-purple-600 text-white border-purple-600'
+      : 'bg-purple-100 text-purple-700 border-purple-300 hover:bg-purple-200'
+  }`}
+>
+  −10%
+</button>
 
   </div>
 </div>
@@ -1658,16 +1666,7 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
       </button>
 
 
-{/* 10% discount */}
-{inv.paymentStatus !== 'PAID' && inv.status !== 'CANCELED' && (
-  <button
-    type="button"
-    onClick={() => applyTenPercentDiscount(inv)}
-    className="bg-purple-50 text-purple-700 border border-purple-200 rounded px-2 py-1 hover:bg-purple-100"
-  >
-    −10%
-  </button>
-)}
+
       {/* Edit button (only if not canceled or paid) */}
       
       {inv.paymentStatus !== 'PAID' && inv.status !== 'CANCELED' && (
