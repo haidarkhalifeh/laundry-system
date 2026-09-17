@@ -572,6 +572,36 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     await loadInvoices();
   }
 
+  async function applyTenPercentDiscount(inv: Invoice) {
+    const discount = -Math.round((inv.subtotal * 0.10) / 1000) * 1000;
+  
+    const res = await fetch('/api/invoices', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: inv.id,
+        adjustedAmount: discount,
+      }),
+    });
+  
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      alert(err?.error || 'فشل تطبيق الخصم');
+      return;
+    }
+  
+    const updated = (await res.json()) as Invoice;
+  
+    setInvoices((prev) =>
+      prev.map((i) => (i.id === updated.id ? updated : i))
+    );
+  
+    // If this invoice is currently open in the popup, update it too
+    setSelectedInvoice((prev) =>
+      prev?.id === updated.id ? updated : prev
+    );
+  }
+
   // mark as paid by ticketNumber (scanner / manual)
   async function handlePayByTicket(e: React.FormEvent) {
     e.preventDefault();
@@ -1586,7 +1616,7 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     <div className="mt-1 text-sm font-medium text-red-600">
       مستلمة:
       {' '}
-      {new Date(inv.pickedUpAt).toLocaleString('ar-LB', {
+      {new Date(inv.pickedUpAt ).toLocaleString('ar-LB', {
         year: 'numeric',
         month: 'numeric',
         day: 'numeric',
@@ -1628,8 +1658,18 @@ const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
       </button>
 
 
-
+{/* 10% discount */}
+{inv.paymentStatus !== 'PAID' && inv.status !== 'CANCELED' && (
+  <button
+    type="button"
+    onClick={() => applyTenPercentDiscount(inv)}
+    className="bg-purple-50 text-purple-700 border border-purple-200 rounded px-2 py-1 hover:bg-purple-100"
+  >
+    −10%
+  </button>
+)}
       {/* Edit button (only if not canceled or paid) */}
+      
       {inv.paymentStatus !== 'PAID' && inv.status !== 'CANCELED' && (
         <button
           type="button"
